@@ -105,6 +105,14 @@ public class BuildingManager : MonoBehaviour, IOnEventCallback
         stegGrids.Remove(s.GridPosition);
     }
 
+    /// <summary>Bindet die O(1)-Grid-Zelle eines bereits registrierten Stegs um (bei Reposition).</summary>
+    public static void StegGridChanged(Steg s, Vector2Int oldGrid, Vector2Int newGrid)
+    {
+        if (s == null) return;
+        stegGrids.Remove(oldGrid);
+        stegGrids.Add(newGrid);
+    }
+
     // Platzieren eines Stegs an einer World-Position (X,Y). Gibt true zurück, wenn platziert.
     public bool PlaceStegAt(Vector2 position, bool isLocal = true, bool skipValidation = false, BuildingData data = null)
     {
