@@ -18,10 +18,19 @@ public class FogProjector : MonoBehaviour
 
     private static HashSet<Vector2> exploredCells = new HashSet<Vector2>();
     private static int explorationVersion = 0;
+    public static int ExplorationVersion => explorationVersion;
+
+    // ── Chunked explored-mesh (kein Full-Rebuild mehr — der größte Lag-Verursacher) ──
+    private const int ChunkSize = 32;
+    private static readonly HashSet<Vector2Int> dirtyChunks = new HashSet<Vector2Int>();
+    private static readonly Dictionary<Vector2Int, List<Vector2>> chunkCells = new Dictionary<Vector2Int, List<Vector2>>();
+    private static readonly Dictionary<Vector2Int, MeshFilter> chunkFilters = new Dictionary<Vector2Int, MeshFilter>();
 
     private GameObject exploredMeshObj;
-    private Mesh exploredMesh;
-    private int cachedExploredVersion = -1;
+    private const float ExploredRebuildInterval = 0.25f;
+    private float exploredRebuildTimer = 0f;
+    private const float MaskRenderInterval = 0.06f; // ~16 FPS reicht völlig für die Maske
+    private float maskRenderTimer = 0f;
 
     public static bool IsExplored(Vector2 pos)
     {
@@ -39,7 +48,21 @@ public class FogProjector : MonoBehaviour
                 {
                     Vector2 cell = new Vector2(Mathf.Round(center.x + x), Mathf.Round(center.y + y));
                     if (exploredCells.Add(cell))
+                    {
                         explorationVersion++;
+
+                        // Zelle direkt in ihren Chunk einsortieren (Liste wird je Chunk einmal geführt)
+                        Vector2Int chunk = new Vector2Int(
+                            Mathf.FloorToInt(cell.x / ChunkSize),
+                            Mathf.FloorToInt(cell.y / ChunkSize));
+                        if (!chunkCells.TryGetValue(chunk, out List<Vector2> list))
+                        {
+                            list = new List<Vector2>();
+                            chunkCells[chunk] = list;
+                        }
+                        list.Add(cell);
+                        dirtyChunks.Add(chunk);
+                    }
                 }
             }
         }
@@ -57,6 +80,13 @@ public class FogProjector : MonoBehaviour
         }
 
         SetupFog();
+
+        // Exploration ist static und überlebt Szenenwechsel — die Chunk-Meshes hier NICHT.
+        // Deshalb: alle bereits bekannten Chunks als dirty markieren, damit sie neu gebacken werden.
+        foreach (Vector2Int chunk in chunkCells.Keys)
+        {
+            dirtyChunks.Add(chunk);
+        }
     }
 
     private void SetupFog()
@@ -122,6 +152,8 @@ public class FogProjector : MonoBehaviour
         maskCamera.backgroundColor = Color.black;
         maskCamera.cullingMask = 1 << 31;
         maskCamera.depth = 1;
+        // Wird manuell aus Update() in Intervallen gerendert, nicht jedes Frame automatisch
+        maskCamera.enabled = false;
     }
 
     private void CreateExploredCamera()
@@ -172,22 +204,32 @@ public class FogProjector : MonoBehaviour
 
     private void Update()
     {
-        if (exploredTexture != null && exploredCamera != null)
+        // Nur rendern, wenn es überhaupt etwas zu rendern gibt
+        if (exploredTexture == null || exploredCamera == null || maskCamera == null) return;
+
+        // Chunk-Rebuilds gebündelt (max. alle 0.25s statt bei jeder neuen Zelle sofort)
+        exploredRebuildTimer -= Time.deltaTime;
+        if (dirtyChunks.Count > 0 && exploredRebuildTimer <= 0f)
         {
-            if (explorationVersion != cachedExploredVersion)
-            {
-                cachedExploredVersion = explorationVersion;
-                RebuildExploredMesh();
-            }
+            exploredRebuildTimer = ExploredRebuildInterval;
+            RebuildDirtyChunks();
+            dirtyChunks.Clear();
+
+            // Explored-Textur nach geändertem Mesh neu backen
             exploredCamera.Render();
         }
 
+        // Mask-Kamera (aktuelles Sichtfeld) drosselt das pro-Frame-Rendern
+        maskRenderTimer -= Time.deltaTime;
+        if (maskRenderTimer <= 0f)
+        {
+            maskRenderTimer = MaskRenderInterval;
+            maskCamera.Render();
+        }
     }
 
-    private void RebuildExploredMesh()
+    private void RebuildDirtyChunks()
     {
-        if (exploredCells.Count == 0) return;
-
         if (exploredMeshObj == null)
         {
             exploredMeshObj = new GameObject("ExploredMesh");
@@ -195,36 +237,69 @@ public class FogProjector : MonoBehaviour
             exploredMeshObj.transform.SetParent(transform);
             exploredMeshObj.transform.position = Vector3.zero;
             exploredMeshObj.AddComponent<MeshFilter>();
-
             MeshRenderer mr = exploredMeshObj.AddComponent<MeshRenderer>();
             mr.material = new Material(Shader.Find("Unlit/Color"));
             mr.material.color = Color.white;
         }
 
-        List<Vector3> verts = new List<Vector3>();
-        List<int> tris = new List<int>();
-
-        Vector2[] offsets = {
-            new Vector2(-0.5f, -0.5f),
-            new Vector2(0.5f, -0.5f),
-            new Vector2(0.5f, 0.5f),
-            new Vector2(-0.5f, 0.5f)
-        };
-
-        foreach (Vector2 cell in exploredCells)
+        foreach (Vector2Int chunk in dirtyChunks)
         {
-            int vi = verts.Count;
-            foreach (var off in offsets)
-                verts.Add(new Vector3(cell.x + off.x, cell.y + off.y, 0));
-            tris.Add(vi); tris.Add(vi + 1); tris.Add(vi + 2);
-            tris.Add(vi); tris.Add(vi + 2); tris.Add(vi + 3);
+            List<Vector2> cells = GetOrCreateChunkCells(chunk);
+
+            if (!chunkFilters.TryGetValue(chunk, out MeshFilter filter) || filter == null)
+            {
+                GameObject chunkObj = new GameObject($"ExploredChunk_{chunk.x}_{chunk.y}");
+                chunkObj.layer = 30;
+                chunkObj.transform.SetParent(exploredMeshObj.transform, false);
+                filter = chunkObj.AddComponent<MeshFilter>();
+                chunkFilters[chunk] = filter;
+            }
+
+            // Mesh wiederverwenden statt jedes Mal neu zu erzeugen (vermeidet GC/Finalize-Druck)
+            Mesh mesh = filter.sharedMesh;
+            if (mesh == null)
+            {
+                mesh = new Mesh();
+                filter.sharedMesh = mesh;
+            }
+            mesh.Clear();
+
+            int cellCount = cells.Count;
+            Vector3[] verts = new Vector3[cellCount * 4];
+            int[] tris = new int[cellCount * 6];
+
+            for (int i = 0; i < cellCount; i++)
+            {
+                Vector2 cell = cells[i];
+                int vi = i * 4;
+                verts[vi]     = new Vector3(cell.x - 0.5f, cell.y - 0.5f, 0f);
+                verts[vi + 1] = new Vector3(cell.x + 0.5f, cell.y - 0.5f, 0f);
+                verts[vi + 2] = new Vector3(cell.x + 0.5f, cell.y + 0.5f, 0f);
+                verts[vi + 3] = new Vector3(cell.x - 0.5f, cell.y + 0.5f, 0f);
+
+                int ti = i * 6;
+                tris[ti]     = vi;
+                tris[ti + 1] = vi + 1;
+                tris[ti + 2] = vi + 2;
+                tris[ti + 3] = vi;
+                tris[ti + 4] = vi + 2;
+                tris[ti + 5] = vi + 3;
+            }
+
+            mesh.vertices = verts;
+            mesh.triangles = tris;
+            mesh.RecalculateBounds();
         }
+    }
 
-        if (exploredMesh != null) Destroy(exploredMesh);
-        exploredMesh = new Mesh();
-        exploredMesh.vertices = verts.ToArray();
-        exploredMesh.triangles = tris.ToArray();
-
-        exploredMeshObj.GetComponent<MeshFilter>().mesh = exploredMesh;
+    private List<Vector2> GetOrCreateChunkCells(Vector2Int chunk)
+    {
+        if (!chunkCells.TryGetValue(chunk, out List<Vector2> cells))
+        {
+            // Sollte normalerweise nie passieren (RegisterExploration legt alles an) — Fallback leere Liste
+            cells = new List<Vector2>();
+            chunkCells[chunk] = cells;
+        }
+        return cells;
     }
 }

@@ -24,10 +24,10 @@ public class MainMenu : MonoBehaviourPunCallbacks
     private const string PlayerNamePrefKey = "PlayerName";
     private readonly byte[] maxPlayersOptions = { 2, 4, 6, 8 };
 
-    private readonly Color bgColor = new Color(0.07f, 0.09f, 0.11f, 1f);
-    private readonly Color panelColor = new Color(0.13f, 0.10f, 0.07f, 0.92f);
-    private readonly Color accentColor = new Color(0.85f, 0.68f, 0.29f, 1f);
-    private readonly Color textColor = new Color(0.94f, 0.90f, 0.80f, 1f);
+    private readonly Color bgColor     = GameUITheme.ScreenBackdrop;
+    private readonly Color panelColor  = GameUITheme.PanelBackground;
+    private readonly Color accentColor = GameUITheme.AccentGold;
+    private readonly Color textColor   = GameUITheme.LabelParchment;
     private TMP_InputField runtimePlayerNameInput;
     private TMP_InputField runtimeRoomNameInput;
     private TMP_Dropdown runtimeMaxPlayersDropdown;
@@ -41,6 +41,11 @@ public class MainMenu : MonoBehaviourPunCallbacks
     private void Start()
     {
         PhotonNetwork.AutomaticallySyncScene = true;
+
+        // Stale-Static zurücksetzen (relevant wenn Enter-Play-Mode ohne Domain Reload läuft).
+        // Die Test-Kette setzt das Flag später selbst (GameManager.SpawnPlayer).
+        TestModeManager.Active = false;
+
         LoadPlayerName();
         BuildRuntimeMenu();
         SetUIInteractable(false);
@@ -340,17 +345,17 @@ public class MainMenu : MonoBehaviourPunCallbacks
         layout.childForceExpandHeight = false;
         layout.childForceExpandWidth = true;
 
-        CreateRuntimeLabel(root, "Spiele deinen Inselstaat, eröffne eine Lobby und starte direkt in eine neue Runde.", 18f, 56f, new Color(0.86f, 0.89f, 0.90f, 1f));
+        CreateRuntimeLabel(root, "Spiele deinen Inselstaat, eröffne eine Lobby und starte direkt in eine neue Runde.", 18f, 56f, GameUITheme.LabelSecondary);
         runtimePlayerNameInput = CreateRuntimeInput(root, "SPIELERNAME", playerNameInput != null ? playerNameInput.text : "");
         runtimeRoomNameInput = CreateRuntimeInput(root, "LOBBYNAME", roomNameInput != null ? roomNameInput.text : "");
         runtimeMaxPlayersDropdown = CreateRuntimeDropdown(root, "MAX. SPIELER", new[] { "2", "4", "6", "8" }, maxPlayersDropdown != null ? maxPlayersDropdown.value : 1);
 
-        CreateRuntimeButton(root, "LOBBY ERSTELLEN", new Color(0.27f, 0.42f, 0.24f, 1f), OnRuntimeCreateRoom);
-        CreateRuntimeButton(root, "PER NAME BEITRETEN", new Color(0.30f, 0.24f, 0.15f, 1f), OnRuntimeJoinByName);
-        CreateRuntimeButton(root, "OFFENE LOBBY FINDEN", new Color(0.19f, 0.24f, 0.30f, 1f), OnRuntimeJoinRandom);
-        CreateRuntimeButton(root, "TEST-LOBBY", new Color(0.20f, 0.21f, 0.24f, 1f), OnRuntimeTestLobby, 48f);
+        CreateRuntimeButton(root, "LOBBY ERSTELLEN", GameUITheme.ButtonConfirm, OnRuntimeCreateRoom);
+        CreateRuntimeButton(root, "PER NAME BEITRETEN", GameUITheme.ButtonNormal, OnRuntimeJoinByName);
+        CreateRuntimeButton(root, "OFFENE LOBBY FINDEN", GameUITheme.ButtonNormal, OnRuntimeJoinRandom);
+        CreateRuntimeButton(root, "TEST-LOBBY", GameUITheme.ButtonWarning, OnRuntimeTestLobby, 48f);
 
-        runtimeStatusText = CreateRuntimeLabel(root, "", 16f, 50f, new Color(0.87f, 0.89f, 0.90f, 1f));
+        runtimeStatusText = CreateRuntimeLabel(root, "", 16f, 50f, GameUITheme.LabelParchment);
         root.gameObject.AddComponent<MainMenuStatusMirror>().Initialize(statusText, runtimeStatusText);
 
         runtimeMenuCanvasGroup = root.gameObject.AddComponent<CanvasGroup>();
@@ -526,7 +531,7 @@ public class MainMenu : MonoBehaviourPunCallbacks
         TextMeshProUGUI placeholder = placeholderGo.GetComponent<TextMeshProUGUI>();
         placeholder.text = label;
         placeholder.fontSize = 18f;
-        placeholder.color = new Color(0.73f, 0.67f, 0.58f, 1f);
+        placeholder.color = GameUITheme.LabelPlaceholder;
 
         GameObject textGo = new GameObject("Text", typeof(RectTransform), typeof(TextMeshProUGUI));
         textGo.transform.SetParent(textArea.transform, false);
@@ -657,7 +662,7 @@ public class MainMenu : MonoBehaviourPunCallbacks
         ibgRt.anchorMax = Vector2.one;
         ibgRt.sizeDelta = Vector2.zero;
         Image ibgImg = itemBg.GetComponent<Image>();
-        ibgImg.color = new Color(0.2f, 0.18f, 0.15f, 1f);
+        ibgImg.color = GameUITheme.SlotWood;
 
         GameObject itemLabel = new GameObject("Label", typeof(RectTransform), typeof(TextMeshProUGUI));
         itemLabel.transform.SetParent(itemGo.transform, false);
@@ -764,7 +769,7 @@ public class MainMenu : MonoBehaviourPunCallbacks
         scrollRectRt.offsetMax = new Vector2(-8f, -8f);
 
         Image scrollBg = scrollRectRt.gameObject.AddComponent<Image>();
-        scrollBg.color = new Color(0.08f, 0.09f, 0.12f, 0.6f);
+        scrollBg.color = GameUITheme.PanelBackgroundSoft;
 
         RectTransform viewportRt = CreateRect("Viewport", scrollRectRt);
         viewportRt.anchorMin = Vector2.zero;
@@ -803,7 +808,7 @@ public class MainMenu : MonoBehaviourPunCallbacks
         sr.movementType = ScrollRect.MovementType.Clamped;
         sr.scrollSensitivity = 35f;
 
-        roomListStatusText = CreateRuntimeLabel(roomListPanel, "", 14f, 30f, new Color(0.7f, 0.7f, 0.7f, 1f));
+        roomListStatusText = CreateRuntimeLabel(roomListPanel, "", 14f, 30f, GameUITheme.LabelSecondary);
         roomListStatusText.GetComponent<LayoutElement>().minHeight = 0;
         roomListStatusText.text = "Suche nach Lobbys...";
     }
@@ -855,7 +860,7 @@ public class MainMenu : MonoBehaviourPunCallbacks
             worldSize = ws.ToString();
 
         Image img = entry.GetComponent<Image>();
-        img.color = gameStarted ? new Color(0.25f, 0.20f, 0.12f, 1f) : new Color(0.16f, 0.20f, 0.16f, 1f);
+        img.color = gameStarted ? GameUITheme.SlotWood : GameUITheme.ButtonChatIcon;
         img.raycastTarget = true;
 
         Button btn = entry.GetComponent<Button>();
@@ -880,7 +885,7 @@ public class MainMenu : MonoBehaviourPunCallbacks
 
         string statusLabel = gameStarted ? "Im Spiel" : "In Lobby";
         string infoLine = $"{room.PlayerCount}/{room.MaxPlayers} Spieler  •  {worldSize}  •  {statusLabel}";
-        Color infoColor = gameStarted ? new Color(0.95f, 0.78f, 0.35f, 1f) : new Color(0.65f, 0.85f, 0.65f, 1f);
+        Color infoColor = gameStarted ? GameUITheme.StatusWarning : GameUITheme.StatusGood;
 
         TextMeshProUGUI infoText = new GameObject("Info", typeof(RectTransform), typeof(TextMeshProUGUI)).GetComponent<TextMeshProUGUI>();
         infoText.transform.SetParent(textContainer.transform, false);

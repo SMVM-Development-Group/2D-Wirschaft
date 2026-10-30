@@ -12,13 +12,13 @@ public class ShipCargoUI : MonoBehaviour
 {
     public static ShipCargoUI Instance { get; private set; }
 
-    // ── Stil-Farben (identisch zu BuildingInfoPanel) ─────────────────────
-    private readonly Color bgColor     = new Color(0.10f, 0.06f, 0.02f, 0.97f);
-    private readonly Color borderColor = new Color(0.72f, 0.52f, 0.18f, 1.00f);
-    private readonly Color labelColor  = new Color(0.90f, 0.78f, 0.52f, 0.85f);
-    private readonly Color valueColor  = new Color(1.00f, 0.95f, 0.75f, 1.00f);
-    private readonly Color btnNeutral  = new Color(0.25f, 0.42f, 0.18f, 1.00f);
-    private readonly Color slotColor   = new Color(0.22f, 0.15f, 0.08f, 1f);
+    // ── Stil-Farben (zentrale Palette: GameUITheme) ──────────────────────
+    private readonly Color bgColor     = GameUITheme.PanelBackground;
+    private readonly Color borderColor = GameUITheme.OutlineGold;
+    private readonly Color labelColor  = GameUITheme.LabelParchment;
+    private readonly Color valueColor  = GameUITheme.LabelPrimary;
+    private readonly Color btnNeutral  = GameUITheme.ButtonConfirm;
+    private readonly Color slotColor   = GameUITheme.BarBackground;
 
     // ── Panel-Objekte ────────────────────────────────────────────────────
     private GameObject panelRoot;
@@ -155,7 +155,7 @@ public class ShipCargoUI : MonoBehaviour
         rootRT.sizeDelta = new Vector2(520f, 640f);
 
         var outline = panelRoot.AddComponent<Outline>();
-        outline.effectColor = new Color(0, 0, 0, 0.6f);
+        outline.effectColor = GameUITheme.ShadowOutline;
         outline.effectDistance = new Vector2(4f, -4f);
 
         var inner = MakeImage("InnerBG", panelRoot.transform, bgColor);
@@ -176,7 +176,7 @@ public class ShipCargoUI : MonoBehaviour
         var nameLE = txtName.gameObject.AddComponent<LayoutElement>();
         nameLE.flexibleWidth = 1f;
 
-        var btnClose = MakeButton("CloseBtn", headerRow.transform, "✕", new Color(0.65f, 0.10f, 0.08f, 1f), 34f, 34f, 16f);
+        var btnClose = MakeButton("CloseBtn", headerRow.transform, "✕", GameUITheme.ButtonDanger, 34f, 34f, 16f);
         btnClose.onClick.AddListener(HideShipUI);
 
         MakeDivider(inner.transform);
@@ -265,7 +265,7 @@ public class ShipCargoUI : MonoBehaviour
 
     private void BuildSubUI(Transform canvasParent)
     {
-        subUIRoot = MakeImage("SubUI_Overlay", canvasParent, new Color(0, 0, 0, 0.5f));
+        subUIRoot = MakeImage("SubUI_Overlay", canvasParent, GameUITheme.OverlayVeil);
         var subRT = subUIRoot.GetComponent<RectTransform>();
         subRT.anchorMin = Vector2.zero; subRT.anchorMax = Vector2.one;
         subRT.sizeDelta = Vector2.zero;
@@ -287,7 +287,7 @@ public class ShipCargoUI : MonoBehaviour
         var headerRow = MakeLayoutRow("SubHeader", subFrame.transform, 0f, 36f);
         subUITitle = MakeTMP("SubTitle", headerRow.transform, "", 18f, FontStyles.Bold, valueColor, TextAlignmentOptions.Left);
         AddLE(subUITitle.gameObject, flexW: 1f);
-        subUIClose = MakeButton("SubClose", headerRow.transform, "✕", new Color(0.65f, 0.10f, 0.08f, 1f), 30f, 30f, 14f);
+        subUIClose = MakeButton("SubClose", headerRow.transform, "✕", GameUITheme.ButtonDanger, 30f, 30f, 14f);
         subUIClose.onClick.AddListener(() => subUIRoot.SetActive(false));
 
         MakeDivider(subFrame.transform);
@@ -327,8 +327,8 @@ public class ShipCargoUI : MonoBehaviour
         if (slot.IsEmpty)
         {
             obj.name = "EmptySlot";
-            obj.GetComponent<Image>().color = new Color(0.15f, 0.1f, 0.05f, 0.6f);
-            var dash = MakeTMP("Dash", obj.transform, "-", 18f, FontStyles.Normal, new Color(0.5f, 0.5f, 0.5f, 0.5f), TextAlignmentOptions.Center);
+            obj.GetComponent<Image>().color = GameUITheme.OverlayVeil;
+            var dash = MakeTMP("Dash", obj.transform, "-", 18f, FontStyles.Normal, GameUITheme.LabelPlaceholder, TextAlignmentOptions.Center);
             var dRT = dash.GetComponent<RectTransform>();
             dRT.anchorMin = Vector2.zero; dRT.anchorMax = Vector2.one;
             dRT.sizeDelta = Vector2.zero;
@@ -349,14 +349,14 @@ public class ShipCargoUI : MonoBehaviour
             {
                 obj.name = "Builder";
                 label = "👷";
-                labelColor = Color.yellow;
+                labelColor = GameUITheme.StatusWarning;
                 iconSprite = LoadBuilderSprite();
             }
             else if (slot.content == ShipSlot.SlotContent.Soldier)
             {
                 obj.name = $"Soldier_{slot.soldierType}";
                 label = slot.soldierType.ToString().Substring(0, 2);
-                labelColor = Color.red;
+                labelColor = GameUITheme.StatusBad;
                 iconSprite = LoadSoldierSprite(slot.soldierType);
             }
 
@@ -551,8 +551,8 @@ public class ShipCargoUI : MonoBehaviour
     {
         if (currentShip == null || txtCrew == null) return;
         txtCrew.text = currentShip.HasCrew()
-            ? "<color=#88FF88>Besatzung: ✓</color>"
-            : "<color=#FF6644>Besatzung: ✗ (benötigt Dorfbewohner!)</color>";
+            ? $"<color={GameUITheme.HtmlGood}>Besatzung: ✓</color>"
+            : $"<color={GameUITheme.HtmlBad}>Besatzung: ✗ (benötigt Dorfbewohner!)</color>";
     }
 
     private void UpdateCapacityDisplay()
@@ -584,7 +584,7 @@ public class ShipCargoUI : MonoBehaviour
     {
         var go = new GameObject(name, typeof(RectTransform), typeof(CanvasRenderer), typeof(Image));
         go.transform.SetParent(parent, false);
-        go.GetComponent<Image>().color = new Color(0.12f, 0.14f, 0.18f, 0.95f);
+        go.GetComponent<Image>().color = GameUITheme.InputBackground;
         var le = go.AddComponent<LayoutElement>();
         le.preferredWidth = w;
         le.preferredHeight = h;
@@ -619,7 +619,7 @@ public class ShipCargoUI : MonoBehaviour
         var pTMP = placeholderGO.GetComponent<TextMeshProUGUI>();
         pTMP.text = placeholder;
         pTMP.fontSize = 12f;
-        pTMP.color = new Color(0.68f, 0.68f, 0.68f, 1f);
+        pTMP.color = GameUITheme.LabelPlaceholder;
         pTMP.alignment = TextAlignmentOptions.Left;
 
         inputField.textViewport = vpRT;
@@ -728,7 +728,7 @@ public class ShipCargoUI : MonoBehaviour
 
     private static void MakeDivider(Transform parent)
     {
-        var div = MakeImage("Divider", parent, new Color(0.72f, 0.52f, 0.18f, 0.35f));
+        var div = MakeImage("Divider", parent, GameUITheme.OutlineGold);
         div.AddComponent<LayoutElement>().minHeight = 2f;
     }
 

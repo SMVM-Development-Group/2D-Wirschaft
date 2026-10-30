@@ -1,13 +1,18 @@
 using UnityEngine;
 using System.Collections.Generic;
 using System.Linq;
+using Photon.Pun;
+using Photon.Realtime;
+using ExitGames.Client.Photon;
 
 /// <summary>
 /// Manages all warehouses and tracks island ownership.
 /// Warehouses are required to build on other islands.
 /// </summary>
-public class WarehouseManager : MonoBehaviour
+public class WarehouseManager : MonoBehaviour, IOnEventCallback
 {
+    private const byte WarehouseCaptureEventCode = 10;
+
     public static WarehouseManager Instance { get; private set; }
 
     [Header("Warehouse Settings")]
@@ -21,6 +26,79 @@ public class WarehouseManager : MonoBehaviour
         if (Instance == null) Instance = this;
         else Destroy(gameObject);
     }
+
+    private void OnEnable()
+    {
+        PhotonNetwork.AddCallbackTarget(this);
+    }
+
+    private void OnDisable()
+    {
+        PhotonNetwork.RemoveCallbackTarget(this);
+    }
+
+    public void OnEvent(EventData photonEvent)
+    {
+        // Emfänger für "Lagerhaus erobert" (vorher wurde Event 10 gesendet, aber NIE verarbeitet!)
+        if (photonEvent.Code == WarehouseCaptureEventCode && photonEvent.CustomData is object[] data)
+        {
+            ReceiveWarehouseCapture(data);
+        }
+    }
+
+    private void ReceiveWarehouseCapture(object[] data)
+    {
+        if (data == null || data.Length < 4) return;
+
+        string warehouseName = (string)data[0];
+        float x = (float)data[1];
+        float y = (float)data[2];
+        int attackerPlayerId = (int)data[3];
+
+        Warehouse best = null;
+        float bestDist = 1.5f; // Toleranz
+        Vector2 targetPos = new Vector2(x, y);
+
+        foreach (var w in localWarehouses)
+        {
+            if (w == null) continue;
+            float d = Vector2.Distance(w.transform.position, targetPos);
+            if (d < bestDist)
+            {
+                bestDist = d;
+                best = w;
+            }
+        }
+
+        if (best == null)
+        {
+            foreach (var w in enemyWarehouses)
+            {
+                if (w == null) continue;
+                if (w.gameObject.name != warehouseName) continue;
+                float d = Vector2.Distance(w.transform.position, targetPos);
+                if (d < bestDist)
+                {
+                    bestDist = d;
+                    best = w;
+                }
+            }
+        }
+
+        if (best != null)
+        {
+            TransferWarehouseOwnership(best, attackerPlayerId);
+            best.SetOwner(false);
+            Debug.Log($"[WarehouseManager] Capture received for '{warehouseName}' @{targetPos} by player {attackerPlayerId}");
+        }
+        else
+        {
+            Debug.LogWarning($"[WarehouseManager] Capture für '{warehouseName}' @{targetPos} empfangen, aber kein Warehouse gefunden.");
+        }
+    }
+
+    /// <summary>Register-Zugriff auf lokale Lagerhäuser — statt FindObjectsOfType pro Frame.</summary>
+    public System.Collections.Generic.IReadOnlyList<Warehouse> LocalWarehouses => localWarehouses;
 
     public void RegisterWarehouse(Warehouse warehouse)
     {

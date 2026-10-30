@@ -22,14 +22,14 @@ public class TradingUI : MonoBehaviour
     // All tradeable resources in the game
     private readonly string[] tradeableResources = { "holz", "stein", "eisen", "weizen", "wüstenfrucht", "fleisch" };
 
-    // Beautiful UI Colors matching Player_UI style
-    private Color barColor = new Color(0.18f, 0.10f, 0.03f, 0.96f);       // Dunkles Eichenbraun
-    private Color slotColor = new Color(0.42f, 0.27f, 0.09f, 0.92f);      // Warmes Holzbraun
-    private Color borderColor = new Color(0.72f, 0.52f, 0.18f, 1.00f);    // Goldene Umrandung
-    private Color valueColor = new Color(1.00f, 0.95f, 0.75f, 1.00f);     // Helles Cremegold
-    private Color selectedColor = new Color(0.58f, 0.40f, 0.18f, 1.00f);   // Hervorgehobenes Goldbraun
-    private Color buyButtonColor = new Color(0.15f, 0.45f, 0.15f, 1.00f);  // Dunkelgrün für Kauf
-    private Color cancelBtnColor = new Color(0.55f, 0.18f, 0.15f, 1.00f);  // Dunkelrot für Abbruch
+    // Beautiful UI Colors (zentrale Palette: GameUITheme)
+    private Color barColor = GameUITheme.BarBackground;                 // Dunkles Eichenbraun
+    private Color slotColor = GameUITheme.SlotWood;                     // Warmes Holzbraun
+    private Color borderColor = GameUITheme.AccentGold;                 // Goldene Umrandung
+    private Color valueColor = GameUITheme.LabelPrimary;                // Helles Werte-Gold
+    private Color selectedColor = GameUITheme.SelectionGold;            // Aktive Auswahl
+    private Color buyButtonColor = GameUITheme.ButtonConfirm;           // Dunkelgrün für Kauf
+    private Color cancelBtnColor = GameUITheme.ButtonDanger;            // Dunkelrot für Abbruch
 
     private Dictionary<string, Image> filterTabImages = new Dictionary<string, Image>();
     private Dictionary<string, Image> createTabImages = new Dictionary<string, Image>();
@@ -74,7 +74,7 @@ public class TradingUI : MonoBehaviour
 
     private void BuildUI()
     {
-        Canvas canvas = FindFirstObjectByType<Canvas>();
+        Canvas canvas = FindAnyObjectByType<Canvas>();
         if (canvas == null) return;
 
         // --- Main Panel Wrapper ---
@@ -86,7 +86,7 @@ public class TradingUI : MonoBehaviour
         panelRT.sizeDelta = Vector2.zero;
         
         var bgImage = tradingPanel.GetComponent<Image>();
-        bgImage.color = new Color(0, 0, 0, 0.65f); // Semi-transparent dark overlay
+        bgImage.color = GameUITheme.OverlayVeil; // Semi-transparent dark overlay
 
         // Close when clicking outside
         var btn = tradingPanel.GetComponent<Button>();
@@ -156,7 +156,7 @@ public class TradingUI : MonoBehaviour
         var headerGO = new GameObject("TableHeader", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image));
         headerGO.transform.SetParent(windowGO.transform, false);
         var hImg = headerGO.GetComponent<Image>();
-        hImg.color = new Color(0.12f, 0.08f, 0.04f, 0.95f);
+        hImg.color = GameUITheme.PanelBackground;
         var hLE = headerGO.AddComponent<LayoutElement>();
         hLE.preferredHeight = 35f;
         hLE.flexibleWidth = 1f;
@@ -181,7 +181,7 @@ public class TradingUI : MonoBehaviour
         var listWrapper = new GameObject("ListWrapper", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image));
         listWrapper.transform.SetParent(windowGO.transform, false);
         var lwImg = listWrapper.GetComponent<Image>();
-        lwImg.color = new Color(0, 0, 0, 0.45f);
+        lwImg.color = GameUITheme.OverlayVeil;
         var lwOutline = listWrapper.AddComponent<Outline>();
         lwOutline.effectColor = borderColor;
         lwOutline.effectDistance = new Vector2(1, -1);
@@ -223,7 +223,7 @@ public class TradingUI : MonoBehaviour
         var createAreaGO = new GameObject("CreateArea", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image));
         createAreaGO.transform.SetParent(windowGO.transform, false);
         var caImg = createAreaGO.GetComponent<Image>();
-        caImg.color = new Color(0.12f, 0.08f, 0.04f, 0.85f);
+        caImg.color = GameUITheme.PanelBackgroundSoft;
         var caOutline = createAreaGO.AddComponent<Outline>();
         caOutline.effectColor = borderColor;
         caOutline.effectDistance = new Vector2(1, -1);
@@ -456,7 +456,7 @@ public class TradingUI : MonoBehaviour
         le.preferredHeight = 40f;
 
         var img = inputGO.GetComponent<Image>();
-        img.color = new Color(0.12f, 0.08f, 0.04f, 0.95f);
+        img.color = GameUITheme.PanelBackground;
         var outline = inputGO.AddComponent<Outline>();
         outline.effectColor = borderColor;
         outline.effectDistance = new Vector2(1, -1);
@@ -489,7 +489,7 @@ public class TradingUI : MonoBehaviour
         var ph = phGO.GetComponent<TextMeshProUGUI>();
         ph.text = placeholderText;
         ph.fontSize = 14f;
-        ph.color = new Color(0.6f, 0.5f, 0.4f, 0.85f);
+        ph.color = GameUITheme.LabelPlaceholder;
         ph.alignment = TextAlignmentOptions.Left;
 
         inputField.textComponent = txt;

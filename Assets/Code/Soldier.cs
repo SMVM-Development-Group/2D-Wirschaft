@@ -1,5 +1,5 @@
 using System.Collections.Generic;
-using Photon.Pun;
+using ExitGames.Client.Photon;
 using UnityEngine;
 
 public enum Team
@@ -24,17 +24,24 @@ public enum WeaponMaterial
     Iron
 }
 
+public class SoldierSpawnEventCodes
+{
+    // Legacy-Hub: GameManager verteilt die Spawn-Events; Codes dort definiert.
+}
+
 [RequireComponent(typeof(SpriteRenderer))]
 [RequireComponent(typeof(BoxCollider2D))]
 public class Soldier : MonoBehaviour
 {
     private const float ArriveDistance = 0.08f;
     private const float AggroPadding = 4f;
-    private const int MaxPathIterations = 12000;
+    private const float TargetRescanInterval = 0.3f;
 
     public static readonly List<Soldier> ActiveSoldiers = new List<Soldier>();
 
+    // Beibehalten fuer Kompatibilitaet mit alten Codepfaden (werden nicht mehr fuer nette IDs verwendet)
     public static int nextNetIdValue = 1;
+
     public int netId;
 
     [Header("Welcher Soldat ist das?")]
@@ -87,10 +94,24 @@ public class Soldier : MonoBehaviour
     private bool patrolTowardsB;
     private bool hasReportedEnemyContact;
 
-    private float syncTimer;
-    private Vector3 lastSyncPos;
-    private const float SyncInterval = 0.2f;
-    private const float SyncMoveThreshold = 0.5f;
+    // ── Netzwerk ──────────────────────────────────────────────────────────
+    /// <summary>Fremde Soldaten werden vom Client des Besitzers nicht simuliert (nur interpoliert).</summary>
+    private bool isSimulated = true;
+    /// <summary>true = Spawn ist zwar lokal, wird aber nicht simuliert (kommt vom Spawner-Helper).</summary>
+    public bool PrepareVisualsOnly;
+
+    private Vector3 syncTargetPosition;
+    private float syncTargetHealth;
+    private float syncSendTimer;
+    private float lastSentHealth;
+    private Vector3 lastSentPosition;
+    private const float StateInterval = 0.15f;
+    private const float StateMoveThreshold = 0.25f;
+
+    // ── Suchtimer (Performance) ───────────────────────────────────────────
+    private float targetRescanTimer;
+    private Soldier cachedEnemyTarget;
+    private BuildingInstance cachedEnemyBuilding;
 
 #if UNITY_EDITOR
     private void OnValidate()
@@ -99,26 +120,32 @@ public class Soldier : MonoBehaviour
         if (shieldSprite == null) shieldSprite = UnityEditor.AssetDatabase.LoadAssetAtPath<Sprite>("Assets/Textures/schildsoldat.png");
         if (swordSprite == null) swordSprite = UnityEditor.AssetDatabase.LoadAssetAtPath<Sprite>("Assets/Textures/schwertkämpfer.png");
         if (bowSprite == null) bowSprite = UnityEditor.AssetDatabase.LoadAssetAtPath<Sprite>("Assets/Textures/bogensoldat.png");
-
-        SpriteRenderer sr = GetComponent<SpriteRenderer>();
-        if (sr != null)
-        {
-            sr.sprite = GetSpriteForType();
-        }
     }
 #endif
 
+    // ── Public Properties ─────────────────────────────────────────────────
     public bool IsOwnedByLocalPlayer
     {
         get
         {
-            if (PhotonNetwork.InRoom && PhotonNetwork.LocalPlayer != null)
-                return ownerActorNumber == PhotonNetwork.LocalPlayer.ActorNumber;
-            return team == Team.Player;
+            if (!Photon.Pun.PhotonNetwork.InRoom)
+                return ownerActorNumber == 0 || ownerActorNumber == 1;
+            return ownerActorNumber == Photon.Pun.PhotonNetwork.LocalPlayer.ActorNumber;
         }
     }
+
+    /// <summary>Dieser Client entscheidet ueber Schaden/Tod des Soldaten.</summary>
+    public bool IsAuthority => netId == 0 ? IsOwnedByLocalPlayer : NetCombat.OwnerFromId(netId) == LocalAuthorityActor();
+
+    private static int LocalAuthorityActor()
+    {
+        return Photon.Pun.PhotonNetwork.InRoom && Photon.Pun.PhotonNetwork.LocalPlayer != null
+            ? Photon.Pun.PhotonNetwork.LocalPlayer.ActorNumber : 1;
+    }
+
     public bool IsSelected => isSelected;
     public Vector2 Position2D => transform.position;
+    public float CurrentHealth => currentHealth;
 
     private void OnEnable()
     {
@@ -126,16 +153,17 @@ public class Soldier : MonoBehaviour
         {
             ActiveSoldiers.Add(this);
         }
+        NetCombat.RegisterSoldier(this);
     }
 
     private void OnDisable()
     {
         ActiveSoldiers.Remove(this);
+        NetCombat.UnregisterSoldier(this);
     }
 
     private void Awake()
     {
-        if (netId == 0) netId = nextNetIdValue++;
         spriteRenderer = GetComponent<SpriteRenderer>();
         spriteRenderer.sortingOrder = 21;
 
@@ -144,18 +172,32 @@ public class Soldier : MonoBehaviour
         if (swordSprite == null) swordSprite = Resources.Load<Sprite>("Textures/schwertkämpfer");
         if (bowSprite == null) bowSprite = Resources.Load<Sprite>("Textures/bogensoldat");
 
-        if (ownerActorNumber == 0 && team == Team.Player && PhotonNetwork.LocalPlayer != null)
+        if (ownerActorNumber == 0 && team == Team.Player)
         {
-            ownerActorNumber = PhotonNetwork.LocalPlayer.ActorNumber;
+            ownerActorNumber = NetCombat.LocalActorId;
         }
+
+        syncTargetPosition = transform.position;
+        syncTargetHealth = -1f;
 
         ApplyStatsForType();
     }
 
     private void Start()
     {
+        if (netId == 0)
+        {
+            netId = NetCombat.NextId(ownerActorNumber);
+        }
+
+        isSimulated = !PrepareVisualsOnly && IsOwnedByLocalPlayer;
+        PrepareVisualsOnly = false;
+
         ApplyWeaponMaterialMultiplier();
+
         currentHealth = maxHealth;
+        syncTargetHealth = currentHealth;
+
         ownerColor = PlayerColorUtility.GetColorForActor(ownerActorNumber, team == Team.Player);
 
         SetupVisuals();
@@ -164,10 +206,93 @@ public class Soldier : MonoBehaviour
         SetSelected(false);
     }
 
+    // ── Netzwerk-Serialisierung (Event 12 Spawn / Event 15 State) ─────────
+    public static object[] SerializeSpawnEvent(Soldier s)
+    {
+        return new object[]
+        {
+            s == null ? 0 : s.netId,
+            (int)(s == null ? SoldierType.Spear : s.soldierType),
+            s == null ? 0f : s.transform.position.x,
+            s == null ? 0f : s.transform.position.y,
+            s == null ? 0 : s.ownerActorNumber,
+            (int)(s == null ? WeaponMaterial.Stone : s.weaponMaterial)
+        };
+    }
+
+    public void SendStateReliable(object[] payload)
+    {
+        NetCombat.Raise(15, payload, true);
+    }
+
+    // wird vom GameManager (Event 15) aufgerufen
+    public void ApplyNetState(object[] data)
+    {
+        if (data == null || data.Length < 4) return;
+        float nx = (float)data[1];
+        float ny = (float)data[2];
+        float hp = (float)data[3];
+        float newShield = data.Length > 4 ? (float)data[4] : shield;
+
+        syncTargetPosition = new Vector3(nx, ny, transform.position.z);
+
+        bool hpChanged = Mathf.Abs(hp - currentHealth) > 0.01f ||
+                         Mathf.Abs(newShield - shield) > 0.01f;
+        if (hpChanged)
+        {
+            float previous = currentHealth;
+            currentHealth = hp;
+            shield = newShield;
+            currentHealth = Mathf.Max(0f, currentHealth);
+            UpdateHealthText();
+
+            // Netzcode hat entscheiddend: kein lokaler Tod-Broadcast (Authority macht das).
+            if (previous > 0f && currentHealth <= 0f && !IsAuthority)
+            {
+                NetDestroy();
+            }
+        }
+    }
+
+    /// <summary>Nur fuer Netzvernichtung (Event 23): destruieren ohne Re-Broadcast.</summary>
+    public void NetDestroy()
+    {
+        if (SelectionManager.Instance != null)
+        {
+            SelectionManager.Instance.NotifySoldierDestroyed(this);
+        }
+        Destroy(gameObject);
+    }
+
+    // ── Simulationskern ───────────────────────────────────────────────────
     private void Update()
     {
-        CleanupTarget();
+        if (!isSimulated)
+        {
+            InterpolateRemote();
+            return;
+        }
 
+        SimulateOwned();
+        BroadcastState();
+    }
+
+    private void InterpolateRemote()
+    {
+        float distance = Vector2.Distance(transform.position, syncTargetPosition);
+        if (distance > 3f)
+        {
+            transform.position = syncTargetPosition;
+        }
+        else if (distance > 0.01f)
+        {
+            transform.position = Vector3.MoveTowards(transform.position, syncTargetPosition,
+                Mathf.Max(moveSpeed * 1.5f, distance * 6f) * Time.deltaTime);
+        }
+    }
+
+    private void SimulateOwned()
+    {
         Vector2Int currentGrid = new Vector2Int(Mathf.RoundToInt(transform.position.x), Mathf.RoundToInt(transform.position.y));
         if (!BuildingManager.IsWalkable(currentGrid))
         {
@@ -181,16 +306,19 @@ public class Soldier : MonoBehaviour
             return;
         }
 
-        if (attackTarget == null)
+        // Ziele alle 0.3s neu scannen statt JEDEM Frame (Performance!)
+        targetRescanTimer -= Time.deltaTime;
+        if (targetRescanTimer <= 0f)
         {
-            attackTarget = FindPreferredEnemy();
+            targetRescanTimer = TargetRescanInterval;
+            cachedEnemyTarget = FindPreferredEnemy();
+            cachedEnemyBuilding = FindEnemyBuildingInRange(attackRange);
         }
 
-        // Check for enemy buildings in range
-        if (attackBuildingTarget == null || !attackBuildingTarget.gameObject.activeInHierarchy)
-        {
-            attackBuildingTarget = FindEnemyBuildingInRange(attackRange);
-        }
+        attackTarget = cachedEnemyTarget;
+        attackBuildingTarget = cachedEnemyBuilding;
+
+        CleanupTarget();
 
         if (attackBuildingTarget != null)
         {
@@ -204,7 +332,7 @@ public class Soldier : MonoBehaviour
                 }
                 return;
             }
-            else if (distance <= attackRange + AggroPadding)
+            if (distance <= attackRange + AggroPadding)
             {
                 MoveTowards(attackBuildingTarget.transform.position);
                 return;
@@ -230,20 +358,35 @@ public class Soldier : MonoBehaviour
                 return;
             }
 
-            if (ShouldChaseEnemy(distance))
+            if (distance <= attackRange + AggroPadding)
             {
                 MoveTowards(attackTarget.transform.position);
                 return;
             }
         }
 
-        attackTarget = null;
-        attackBuildingTarget = null;
         hasReportedEnemyContact = false;
         FollowOrders();
-        BroadcastPosition();
     }
 
+    private void CleanupTarget()
+    {
+        if (attackTarget != null &&
+            (!attackTarget.gameObject.activeInHierarchy || attackTarget.currentHealth <= 0f))
+        {
+            attackTarget = null;
+            cachedEnemyTarget = null;
+        }
+
+        if (attackBuildingTarget != null &&
+            (!attackBuildingTarget.gameObject.activeInHierarchy || attackBuildingTarget.currentHP <= 0))
+        {
+            attackBuildingTarget = null;
+            cachedEnemyBuilding = null;
+        }
+    }
+
+    // ── Befehle ───────────────────────────────────────────────────────────
     public void SetSelected(bool selected)
     {
         isSelected = selected;
@@ -317,8 +460,17 @@ public class Soldier : MonoBehaviour
         SetPathTo(patrolPointB);
     }
 
-    public void TakeDamage(float amount)
+    // ── Schaden / Tod ─────────────────────────────────────────────────────
+    /// <summary>Lokale Schadensanwendung (nur Authority oder Empfaenger von Events).</summary>
+    public void ApplyLocalDamage(float amount)
     {
+        TakeDamage(amount);
+    }
+
+    private bool ConsumeDamage(float amount)
+    {
+        if (currentHealth <= 0f) return true;
+
         if (shield > 0f)
         {
             shield -= amount;
@@ -332,13 +484,32 @@ public class Soldier : MonoBehaviour
         {
             currentHealth -= amount;
         }
+        return false;
+    }
 
+    /// <summary>Lokaler Schaden. Stirbt der Soldat, broadcastet nur der Authority-Client.</summary>
+    public void TakeDamage(float amount)
+    {
+        if (currentHealth <= 0f) return;
+
+        ConsumeDamage(amount);
+        currentHealth = Mathf.Max(0f, currentHealth);
         UpdateHealthText();
 
         if (currentHealth <= 0f)
         {
-            Die();
+            DieAndBroadcast();
         }
+    }
+
+    private void DieAndBroadcast()
+    {
+        if (IsAuthority)
+        {
+            NetCombat.BroadcastSoldierDie(netId);
+        }
+        NetCombat.UnregisterSoldier(this);
+        NetDestroy();
     }
 
     public void SetTeam(Team newTeam, int newOwnerActorNumber = 0)
@@ -349,9 +520,9 @@ public class Soldier : MonoBehaviour
         {
             ownerActorNumber = newOwnerActorNumber;
         }
-        else if (team == Team.Player && ownerActorNumber == 0 && PhotonNetwork.LocalPlayer != null)
+        else if (team == Team.Player && ownerActorNumber == 0)
         {
-            ownerActorNumber = PhotonNetwork.LocalPlayer.ActorNumber;
+            ownerActorNumber = NetCombat.LocalActorId;
         }
         else if (team == Team.Enemy)
         {
@@ -374,6 +545,7 @@ public class Soldier : MonoBehaviour
         }
     }
 
+    // ── Stats ─────────────────────────────────────────────────────────────
     private void ApplyStatsForType()
     {
         spriteRenderer.sprite = GetSpriteForType();
@@ -439,6 +611,7 @@ public class Soldier : MonoBehaviour
         shield *= multiplier;
     }
 
+    // ── Visuals ───────────────────────────────────────────────────────────
     private void CreateHealthBar()
     {
         healthBar = GameObject.CreatePrimitive(PrimitiveType.Quad);
@@ -582,25 +755,7 @@ public class Soldier : MonoBehaviour
         }
     }
 
-    private void CleanupTarget()
-    {
-        if (attackTarget != null)
-        {
-            if (!attackTarget.gameObject.activeInHierarchy || attackTarget.currentHealth <= 0f)
-            {
-                attackTarget = null;
-            }
-        }
-
-        if (attackBuildingTarget != null)
-        {
-            if (!attackBuildingTarget.gameObject.activeInHierarchy || attackBuildingTarget.currentHP <= 0)
-            {
-                attackBuildingTarget = null;
-            }
-        }
-    }
-
+    // ── Zielsuche (Listen-basiert, kein FindObjectsOfType!) ────────────────
     private Soldier FindPreferredEnemy()
     {
         float searchRange = attackRange + AggroPadding;
@@ -626,23 +781,20 @@ public class Soldier : MonoBehaviour
         return closest;
     }
 
-    /// <summary>Finde feindliche Gebäude in Reichweite.</summary>
     private BuildingInstance FindEnemyBuildingInRange(float range)
     {
-        BuildingInstance[] buildings = FindObjectsOfType<BuildingInstance>();
+        // Statikliste statt FindObjectsOfType pro Frame
+        BuildingInstance.AllBuildings.RemoveAll(b => b == null);
+
         BuildingInstance closest = null;
         float closestDist = float.MaxValue;
 
-        foreach (var b in buildings)
+        for (int i = 0; i < BuildingInstance.AllBuildings.Count; i++)
         {
+            BuildingInstance b = BuildingInstance.AllBuildings[i];
             if (b == null || !b.gameObject.activeInHierarchy) continue;
 
-            bool isEnemy = false;
-            if (team == Team.Player && !b.isLocal)
-                isEnemy = true;
-            else if (team == Team.Enemy && b.isLocal)
-                isEnemy = true;
-
+            bool isEnemy = team == Team.Player ? !b.isLocal : b.isLocal;
             if (!isEnemy) continue;
 
             float distance = Vector2.Distance(transform.position, b.transform.position);
@@ -671,16 +823,7 @@ public class Soldier : MonoBehaviour
         return team != other.team;
     }
 
-    private bool ShouldChaseEnemy(float distance)
-    {
-        if (attackTarget == null)
-        {
-            return false;
-        }
-
-        return distance <= attackRange + AggroPadding;
-    }
-
+    // ── Bewegung ──────────────────────────────────────────────────────────
     private void FollowOrders()
     {
         if (hasMoveOrder)
@@ -728,7 +871,9 @@ public class Soldier : MonoBehaviour
         }
 
         SpawnHitEffect(enemySoldier.transform.position);
-        enemySoldier.TakeDamage(damage);
+
+        // Schaden netzwerkfaehig: Authority des Ziels entscheidet ueber HP.
+        NetCombat.ApplySoldierDamage(enemySoldier, damage);
     }
 
     private void AttackBuilding(BuildingInstance building)
@@ -745,7 +890,7 @@ public class Soldier : MonoBehaviour
         int damageToDeal = Mathf.RoundToInt(damage);
         building.TakeDamage(damageToDeal);
 
-        if (team == Team.Player)
+        if (team == Team.Player && building.isLocal)
         {
             NotificationManager.Instance?.Notify("building_under_attack",
                 "Dein Gebäude wird angegriffen!", 3f);
@@ -787,33 +932,26 @@ public class Soldier : MonoBehaviour
         ps.Play();
     }
 
-    private void Die()
+    // ── Netz-Synchronisation (Event 15) ───────────────────────────────────
+    private void BroadcastState()
     {
-        if (SelectionManager.Instance != null)
-        {
-            SelectionManager.Instance.NotifySoldierDestroyed(this);
-        }
-
-        Destroy(gameObject);
-    }
-
-    private void BroadcastPosition()
-    {
-        if (!PhotonNetwork.InRoom) return;
-        if (team != Team.Player) return;
+        if (!Photon.Pun.PhotonNetwork.InRoom) return;
 
         Vector3 pos = transform.position;
-        if (Vector3.Distance(pos, lastSyncPos) < SyncMoveThreshold) return;
+        bool moved = (pos - lastSentPosition).sqrMagnitude >= StateMoveThreshold * StateMoveThreshold;
+        bool hpChanged = Mathf.Abs(currentHealth - lastSentHealth) > 0.01f;
 
-        syncTimer += Time.deltaTime;
-        if (syncTimer < SyncInterval) return;
-        syncTimer = 0f;
-        lastSyncPos = pos;
+        if (!moved && !hpChanged) return;
 
-        object[] data = new object[] { netId, pos.x, pos.y };
-        PhotonNetwork.RaiseEvent(15, data,
-            new Photon.Realtime.RaiseEventOptions { Receivers = Photon.Realtime.ReceiverGroup.Others },
-            new ExitGames.Client.Photon.SendOptions { Reliability = false });
+        syncSendTimer += Time.deltaTime;
+        if (syncSendTimer < StateInterval) return;
+        syncSendTimer = 0f;
+
+        lastSentPosition = pos;
+        lastSentHealth = currentHealth;
+
+        object[] data = new object[] { netId, pos.x, pos.y, currentHealth, shield };
+        NetCombat.Raise(15, data, false);
     }
 
     private void UpdatePatrolRenderer()
@@ -900,118 +1038,6 @@ public class Soldier : MonoBehaviour
         }
 
         return snapped;
-    }
-
-    private static List<Vector2> FindPath(Vector2 start, Vector2 destination)
-    {
-        List<Vector2> empty = new List<Vector2>();
-        if (!IslandManager.IsLand(start) || !IslandManager.IsLand(destination))
-        {
-            return empty;
-        }
-
-        if (start == destination)
-        {
-            empty.Add(destination);
-            return empty;
-        }
-
-        PriorityQueue frontier = new PriorityQueue();
-        frontier.Enqueue(start, 0f);
-
-        Dictionary<Vector2, Vector2> cameFrom = new Dictionary<Vector2, Vector2>();
-        Dictionary<Vector2, float> costSoFar = new Dictionary<Vector2, float>
-        {
-            [start] = 0f
-        };
-
-        Vector2[] directions = { Vector2.up, Vector2.down, Vector2.left, Vector2.right };
-        int iterations = 0;
-
-        while (frontier.Count > 0 && iterations++ < MaxPathIterations)
-        {
-            Vector2 current = frontier.Dequeue();
-            if (current == destination)
-            {
-                return ReconstructPath(cameFrom, destination);
-            }
-
-            for (int i = 0; i < directions.Length; i++)
-            {
-                Vector2 next = current + directions[i];
-                if (!IslandManager.IsLand(next))
-                {
-                    continue;
-                }
-
-                float newCost = costSoFar[current] + 1f;
-                if (costSoFar.TryGetValue(next, out float existingCost) && newCost >= existingCost)
-                {
-                    continue;
-                }
-
-                costSoFar[next] = newCost;
-                cameFrom[next] = current;
-                frontier.Enqueue(next, newCost + Heuristic(next, destination));
-            }
-        }
-
-        return empty;
-    }
-
-    private static List<Vector2> ReconstructPath(Dictionary<Vector2, Vector2> cameFrom, Vector2 destination)
-    {
-        List<Vector2> path = new List<Vector2> { destination };
-        Vector2 current = destination;
-
-        while (cameFrom.TryGetValue(current, out Vector2 previous))
-        {
-            current = previous;
-            path.Add(current);
-        }
-
-        path.Reverse();
-        if (path.Count > 0)
-        {
-            path.RemoveAt(0);
-        }
-
-        return path;
-    }
-
-    private static float Heuristic(Vector2 a, Vector2 b)
-    {
-        return Mathf.Abs(a.x - b.x) + Mathf.Abs(a.y - b.y);
-    }
-
-    private sealed class PriorityQueue
-    {
-        private readonly List<(Vector2 node, float priority)> items = new List<(Vector2, float)>();
-
-        public int Count => items.Count;
-
-        public void Enqueue(Vector2 node, float priority)
-        {
-            items.Add((node, priority));
-        }
-
-        public Vector2 Dequeue()
-        {
-            int bestIndex = 0;
-            float bestPriority = items[0].priority;
-            for (int i = 1; i < items.Count; i++)
-            {
-                if (items[i].priority < bestPriority)
-                {
-                    bestPriority = items[i].priority;
-                    bestIndex = i;
-                }
-            }
-
-            Vector2 result = items[bestIndex].node;
-            items.RemoveAt(bestIndex);
-            return result;
-        }
     }
 
     private void OnDrawGizmosSelected()

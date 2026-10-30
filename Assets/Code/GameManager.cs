@@ -23,6 +23,7 @@ public class GameManager : MonoBehaviourPunCallbacks, IOnEventCallback
     private const byte PierLineEventCode = 18;
     private const byte WorldStateRequestEventCode = 20;
     private const byte WorldStateResponseEventCode = 21;
+    private int photonEventSenderActor;
     private readonly int maxChatMessages = 6;
     private readonly List<string> chatMessages = new List<string>();
 
@@ -38,12 +39,12 @@ public class GameManager : MonoBehaviourPunCallbacks, IOnEventCallback
     [Header("UI References")]
     [SerializeField] private TextMeshProUGUI gameStatusText;
 
-    private void OnEnable()
+    private new void OnEnable()
     {
         PhotonNetwork.AddCallbackTarget(this);
     }
 
-    private void OnDisable()
+    private new void OnDisable()
     {
         PhotonNetwork.RemoveCallbackTarget(this);
     }
@@ -82,11 +83,12 @@ public class GameManager : MonoBehaviourPunCallbacks, IOnEventCallback
         EnsureManagerExists<AudioManager>();
         EnsureManagerExists<TradingManager>();
         EnsureManagerExists<TradingUI>();
+        EnsureManagerExists<WarehouseManager>();
     }
 
     private void EnsureManagerExists<T>() where T : MonoBehaviour
     {
-        if (FindObjectOfType<T>() == null)
+        if (FindAnyObjectByType<T>() == null)
         {
             GameObject obj = new GameObject(typeof(T).Name);
             obj.AddComponent<T>();
@@ -111,6 +113,7 @@ public class GameManager : MonoBehaviourPunCallbacks, IOnEventCallback
         {
             isTestMode = (bool)testModeValue;
         }
+        TestModeManager.Active = isTestMode;
 
         // Get player index
         int playerIndex = 0;
@@ -176,10 +179,11 @@ public class GameManager : MonoBehaviourPunCallbacks, IOnEventCallback
                 }
             }
 
-            // Testmodus: Dummy-Gegner auf einer anderen Insel spawnen
-            if (isTestMode && players.Length < 2)
+            // Testmodus: Echter Bot-Client verbindet sich wie ein echter Spieler
+            // über die Photon Cloud und baut/simuliert selbst (siehe TestBotClient).
+            if (isTestMode)
             {
-                SpawnDummyPlayer();
+                TestModeBootstrap.Create();
             }
 
             if (PhotonNetwork.InRoom && !PhotonNetwork.IsMasterClient)
@@ -187,35 +191,6 @@ public class GameManager : MonoBehaviourPunCallbacks, IOnEventCallback
                 RequestWorldState();
             }
         }
-    }
-
-    private void SpawnDummyPlayer()
-    {
-        int dummyIndex = 1;
-        Vector2 dummyPos = IslandManager.Instance.GetIslandPosition(dummyIndex);
-
-        BuildingManager.Instance.SpawnMainWarehouse(dummyPos, false);
-
-        // Ein Holzhaus für den Gegner (als Testziel)
-        if (BuildingManager.Instance != null)
-        {
-            BuildingData woodData = null;
-            BuildingData[] allData = Resources.FindObjectsOfTypeAll<BuildingData>();
-            foreach (var d in allData)
-            {
-                if (d.buildingName != null && d.buildingName.ToLower().Contains("holz"))
-                {
-                    woodData = d;
-                    break;
-                }
-            }
-            if (woodData != null)
-            {
-                BuildingManager.Instance.SpawnBuilding(woodData, dummyPos + new Vector2(0f, 4f), false);
-            }
-        }
-
-        Debug.Log("[GameManager] Dummy-Gegner gespawnt (Lagerhaus + Holzhaus).");
     }
 
     private void SyncLocalPopulation(int islandIndex)
@@ -228,6 +203,7 @@ public class GameManager : MonoBehaviourPunCallbacks, IOnEventCallback
         foreach (var v in VillagerManager.Instance.ActiveVillagers)
         {
             if (v == null || !v.isLocal) continue;
+            spawnData.Add(v.VillagerNetworkId);
             spawnData.Add((int)v.role);
             spawnData.Add(v.transform.position.x);
             spawnData.Add(v.transform.position.y);
@@ -248,7 +224,7 @@ public class GameManager : MonoBehaviourPunCallbacks, IOnEventCallback
 
     private void BuildGameChatUI()
     {
-        Canvas canvas = FindFirstObjectByType<Canvas>();
+        Canvas canvas = FindAnyObjectByType<Canvas>();
         if (canvas == null) return;
 
         canvas.renderMode = RenderMode.ScreenSpaceOverlay;
@@ -263,13 +239,13 @@ public class GameManager : MonoBehaviourPunCallbacks, IOnEventCallback
         root.offsetMax = Vector2.zero;
 
         Image bg = root.gameObject.AddComponent<Image>();
-        bg.color = new Color(0.07f, 0.10f, 0.16f, 0.90f);
+        bg.color = GameUITheme.PanelBackground;
         Outline outline = root.gameObject.AddComponent<Outline>();
-        outline.effectColor = new Color(0.76f, 0.70f, 0.45f, 0.9f);
+        outline.effectColor = GameUITheme.AccentGold;
         outline.effectDistance = new Vector2(2f, -2f);
 
         TextMeshProUGUI title = CreateStaticLabel(root, "SPIEL-CHAT", 16f, new Vector2(12f, -10f), new Vector2(-24f, 22f));
-        title.color = new Color(0.90f, 0.84f, 0.60f, 1f);
+        title.color = GameUITheme.LabelParchment;
         title.alignment = TextAlignmentOptions.TopLeft;
         title.raycastTarget = false;
 
@@ -286,8 +262,8 @@ public class GameManager : MonoBehaviourPunCallbacks, IOnEventCallback
         chatLogText.text = "Spiel-Chat aktiv. Schreibe etwas, um Lastigkeit zu prüfen.";
         chatLogText.fontSize = 14f;
         chatLogText.alignment = TextAlignmentOptions.TopLeft;
-        chatLogText.color = new Color(0.92f, 0.92f, 0.92f, 1f);
-        chatLogText.enableWordWrapping = true;
+        chatLogText.color = GameUITheme.LabelPrimary;
+        chatLogText.textWrappingMode = TextWrappingModes.Normal;
         chatLogText.overflowMode = TextOverflowModes.Truncate;
         chatLogText.raycastTarget = false;
 
@@ -306,9 +282,9 @@ public class GameManager : MonoBehaviourPunCallbacks, IOnEventCallback
         inputFieldRect.offsetMax = Vector2.zero;
 
         Image inputBg = inputFieldRect.gameObject.AddComponent<Image>();
-        inputBg.color = new Color(0.12f, 0.14f, 0.18f, 0.95f);
+        inputBg.color = GameUITheme.InputBackground;
         Outline inputOutline = inputFieldRect.gameObject.AddComponent<Outline>();
-        inputOutline.effectColor = new Color(0.5f, 0.5f, 0.55f, 0.7f);
+        inputOutline.effectColor = GameUITheme.InputOutline;
         inputOutline.effectDistance = new Vector2(1f, -1f);
 
         chatInputField = inputFieldRect.gameObject.AddComponent<TMP_InputField>();
@@ -326,15 +302,15 @@ public class GameManager : MonoBehaviourPunCallbacks, IOnEventCallback
 
         chatSendButton = buttonRect.gameObject.AddComponent<Button>();
         Image buttonImage = buttonRect.gameObject.AddComponent<Image>();
-        buttonImage.color = new Color(0.24f, 0.34f, 0.18f, 1f);
+        buttonImage.color = GameUITheme.ButtonConfirm;
         Outline buttonOutline = buttonRect.gameObject.AddComponent<Outline>();
-        buttonOutline.effectColor = new Color(0.80f, 0.70f, 0.40f, 1f);
+        buttonOutline.effectColor = GameUITheme.AccentGold;
         buttonOutline.effectDistance = new Vector2(2f, -2f);
         chatSendButton.onClick.AddListener(SubmitChatInput);
 
         TextMeshProUGUI buttonText = CreateCenteredButtonText(buttonRect.transform, "Senden");
         buttonText.fontSize = 14f;
-        buttonText.color = new Color(0.96f, 0.96f, 0.96f, 1f);
+        buttonText.color = GameUITheme.LabelPrimary;
         buttonText.alignment = TextAlignmentOptions.Center;
 
         AddChatMessage("Spiel-Chat bereit. Wenn du den Gast siehst, bist du in derselben Lobby.");
@@ -387,6 +363,8 @@ public class GameManager : MonoBehaviourPunCallbacks, IOnEventCallback
 
     public void OnEvent(EventData photonEvent)
     {
+        photonEventSenderActor = photonEvent.Sender;
+
         if (photonEvent.Code == LobbyChatEventCode && photonEvent.CustomData is string message)
         {
             AddChatMessage(message);
@@ -423,7 +401,7 @@ public class GameManager : MonoBehaviourPunCallbacks, IOnEventCallback
 
         if (photonEvent.Code == SoldierMoveEventCode && photonEvent.CustomData is object[] moveData)
         {
-            ReceiveSoldierMove(moveData);
+            ReceiveSoldierState(moveData);
             return;
         }
 
@@ -468,42 +446,30 @@ public class GameManager : MonoBehaviourPunCallbacks, IOnEventCallback
         if (VillagerManager.Instance == null) return;
         float islandX = (float)data[0];
         float islandY = (float)data[1];
-        for (int i = 2; i + 2 < data.Length; i += 3)
+        int ownerActor = photonEventSenderActor;
+        for (int i = 2; i + 3 < data.Length; i += 4)
         {
-            Villager.Role role = (Villager.Role)(int)data[i];
-            float vx = (float)data[i + 1];
-            float vy = (float)data[i + 2];
-            VillagerManager.Instance.SpawnVillagerAt(new Vector2(vx, vy), role, false);
+            int villagerId = (int)data[i];
+            Villager.Role role = (Villager.Role)(int)data[i + 1];
+            float vx = (float)data[i + 2];
+            float vy = (float)data[i + 3];
+            VillagerManager.Instance.SpawnRemoteVillager(villagerId, new Vector2(vx, vy), role, ownerActor, true);
         }
     }
 
     private void ReceiveSoldierSpawn(object[] data)
     {
+        if (data == null || data.Length < 4) return;
+
         int netId = (int)data[0];
         SoldierType type = (SoldierType)(int)data[1];
         float px = (float)data[2];
         float py = (float)data[3];
         int ownerActor = data.Length > 4 ? (int)data[4] : 0;
-        SpawnRemoteSoldier(new Vector3(px, py, 0f), type, netId, ownerActor);
-    }
+        WeaponMaterial material = data.Length > 5 ? (WeaponMaterial)(int)data[5] : WeaponMaterial.Stone;
 
-    private void SpawnRemoteSoldier(Vector3 position, SoldierType type, int netId = 0, int ownerActor = 0)
-    {
-        GameObject solObj = new GameObject($"Remote_{type}");
-        solObj.transform.position = position;
-        var sr = solObj.AddComponent<SpriteRenderer>();
-        sr.sortingOrder = 21;
-        solObj.AddComponent<BoxCollider2D>().size = new Vector2(1f, 1f);
-        var s = solObj.AddComponent<Soldier>();
-        s.netId = netId;
-        s.soldierType = type;
-        s.team = Team.Player;
-        if (ownerActor > 0)
-            s.ownerActorNumber = ownerActor;
-        s.moveSpeed = 1.5f;
-        FogRevealer fr = solObj.AddComponent<FogRevealer>();
-        fr.radius = 4f;
-        fr.isLocalPlayer = false;
+        // Remotely gespawnt: lokal erzeugen, NICHT weiterbroadcasten.
+        NetCombat.SpawnSoldier(type, material, new Vector3(px, py, 0f), ownerActor, false, netId);
     }
 
     private void ReceiveBuildingDestroy(object[] data)
@@ -527,38 +493,24 @@ public class GameManager : MonoBehaviourPunCallbacks, IOnEventCallback
 
     private void ReceiveShipSync(object[] data)
     {
-        float spawnX = (float)data[0];
-        float spawnY = (float)data[1];
-        float posX = (float)data[2];
-        float posY = (float)data[3];
-        float rot = (float)data[4];
+        if (data == null || data.Length < 5) return;
+        // { shipId, x, y, rot, flags, cargoUsed }
+        int shipId = (int)data[0];
 
-        Ship[] ships = FindObjectsByType<Ship>(FindObjectsSortMode.None);
-        Vector2Int searchOrigin = new Vector2Int(Mathf.RoundToInt(spawnX), Mathf.RoundToInt(spawnY));
-        foreach (Ship ship in ships)
+        if (NetCombat.TryGetShip(shipId, out Ship ship))
         {
-            if (ship.spawnOrigin == searchOrigin)
-            {
-                ship.transform.position = new Vector3(posX, posY, ship.transform.position.z);
-                ship.transform.rotation = Quaternion.Euler(0f, 0f, rot);
-                return;
-            }
+            ship.ApplyNetState(data);
         }
     }
 
-    private void ReceiveSoldierMove(object[] data)
+    private void ReceiveSoldierState(object[] data)
     {
+        if (data == null || data.Length < 4) return;
         int netId = (int)data[0];
-        float px = (float)data[1];
-        float py = (float)data[2];
 
-        foreach (Soldier s in Soldier.ActiveSoldiers)
+        if (NetCombat.TryGetSoldier(netId, out Soldier s))
         {
-            if (s.netId == netId)
-            {
-                s.transform.position = new Vector3(px, py, s.transform.position.z);
-                return;
-            }
+            s.ApplyNetState(data);
         }
     }
 
@@ -570,7 +522,7 @@ public class GameManager : MonoBehaviourPunCallbacks, IOnEventCallback
         int amount = (int)data[3];
         Vector3 bPos = new Vector3(bx, by, -0.21f);
 
-        var allBuildings = FindObjectsByType<BuildingInstance>(FindObjectsSortMode.None);
+        var allBuildings = FindObjectsByType<BuildingInstance>();
         foreach (var b in allBuildings)
         {
             if (b == null) continue;
@@ -590,7 +542,7 @@ public class GameManager : MonoBehaviourPunCallbacks, IOnEventCallback
         float by = (float)data[2];
         Vector3 bPos = new Vector3(bx, by, -0.21f);
 
-        var allBuildings = FindObjectsByType<BuildingInstance>(FindObjectsSortMode.None);
+        var allBuildings = FindObjectsByType<BuildingInstance>();
         BuildingInstance wb = null;
         foreach (var b in allBuildings)
         {
@@ -677,7 +629,7 @@ public class GameManager : MonoBehaviourPunCallbacks, IOnEventCallback
         btnRect.sizeDelta = new Vector2(28f, 28f);
 
         Image btnImage = btnRect.gameObject.AddComponent<Image>();
-        btnImage.color = new Color(0.16f, 0.20f, 0.26f, 0.95f);
+        btnImage.color = GameUITheme.ButtonChatIcon;
         btnImage.raycastTarget = true;
 
         Button closeBtn = btnRect.gameObject.AddComponent<Button>();
@@ -686,7 +638,7 @@ public class GameManager : MonoBehaviourPunCallbacks, IOnEventCallback
 
         TextMeshProUGUI txt = CreateCenteredButtonText(btnRect.transform, "X");
         txt.fontSize = 16f;
-        txt.color = new Color(0.90f, 0.84f, 0.60f, 1f);
+        txt.color = GameUITheme.LabelParchment;
         txt.raycastTarget = false;
 
         btnRect.SetAsLastSibling();
@@ -713,7 +665,7 @@ public class GameManager : MonoBehaviourPunCallbacks, IOnEventCallback
         }
         else
         {
-            iconImage.color = new Color(0.16f, 0.20f, 0.26f, 0.95f);
+            iconImage.color = GameUITheme.ButtonChatIcon;
             TextMeshProUGUI fallback = CreateCenteredButtonText(iconRect, "Chat");
             fallback.fontSize = 12f;
         }
@@ -769,8 +721,8 @@ public class GameManager : MonoBehaviourPunCallbacks, IOnEventCallback
         text.text = value;
         text.fontSize = 14f;
         text.alignment = TextAlignmentOptions.Left;
-        text.color = isPlaceholder ? new Color(0.68f, 0.68f, 0.68f, 1f) : new Color(0.95f, 0.95f, 0.95f, 1f);
-        text.enableWordWrapping = false;
+        text.color = isPlaceholder ? GameUITheme.LabelPlaceholder : GameUITheme.LabelPrimary;
+        text.textWrappingMode = TextWrappingModes.NoWrap;
         return text;
     }
 
@@ -795,8 +747,8 @@ public class GameManager : MonoBehaviourPunCallbacks, IOnEventCallback
         text.fontSize = size;
         text.fontStyle = FontStyles.Bold;
         text.alignment = TextAlignmentOptions.TopLeft;
-        text.color = new Color(0.90f, 0.84f, 0.60f, 1f);
-        text.enableWordWrapping = true;
+        text.color = GameUITheme.LabelParchment;
+        text.textWrappingMode = TextWrappingModes.Normal;
         return text;
     }
 
@@ -812,7 +764,7 @@ public class GameManager : MonoBehaviourPunCallbacks, IOnEventCallback
         text.text = value;
         text.alignment = TextAlignmentOptions.Center;
         text.fontStyle = FontStyles.Bold;
-        text.color = new Color(0.96f, 0.96f, 0.96f, 1f);
+        text.color = GameUITheme.LabelPrimary;
         return text;
     }
 
@@ -869,8 +821,10 @@ public class GameManager : MonoBehaviourPunCallbacks, IOnEventCallback
 
     private void SpawnInitialSoldiers()
     {
+        // (Vormals: eigene GameObjects + eigenes Event-12-Format, das nicht mehr zur
+        // Standard-Serialisierung passt. Alles läuft jetzt über NetCombat.SpawnSoldier.)
         Vector3 spawnPos;
-        Warehouse wh = FindObjectOfType<Warehouse>();
+        Warehouse wh = FindAnyObjectByType<Warehouse>();
         if (wh != null)
         {
             spawnPos = wh.transform.position + new Vector3(2f, 0f, 0f);
@@ -891,44 +845,13 @@ public class GameManager : MonoBehaviourPunCallbacks, IOnEventCallback
         {
             for (int i = 0; i < 2; i++)
             {
-                GameObject solObj = new GameObject($"Init_{type}_{i}");
                 Vector3 offset = new Vector3(i * 1.2f, (int)type * 1.2f, 0f);
-                solObj.transform.position = spawnPos + offset;
-
-                var sr = solObj.AddComponent<SpriteRenderer>();
-                sr.sortingOrder = 21;
-                solObj.AddComponent<BoxCollider2D>().size = new Vector2(1f, 1f);
-
-                var s = solObj.AddComponent<Soldier>();
-                s.soldierType = type;
-                s.team = Team.Player;
-                s.moveSpeed = 1.5f;
+                NetCombat.SpawnSoldier(type, WeaponMaterial.Stone, spawnPos + offset,
+                    NetCombat.LocalActorId, true);
             }
         }
 
-        Debug.Log("[GameManager] 8 Start-Soldaten gespawnt (2 pro Typ).");
-
-        SyncInitialSoldiers(spawnPos, types);
-    }
-
-    private void SyncInitialSoldiers(Vector3 basePos, SoldierType[] types)
-    {
-        if (!PhotonNetwork.InRoom) return;
-        List<object> data = new List<object>();
-        data.Add(basePos.x);
-        data.Add(basePos.y);
-        foreach (var type in types)
-        {
-            for (int i = 0; i < 2; i++)
-            {
-                data.Add((int)type);
-                data.Add(i * 1.2f);
-                data.Add((int)type * 1.2f);
-            }
-        }
-        ExitGames.Client.Photon.SendOptions sendOpts = new ExitGames.Client.Photon.SendOptions { Reliability = true };
-        PhotonNetwork.RaiseEvent(SoldierSpawnEventCode, data.ToArray(),
-            new Photon.Realtime.RaiseEventOptions { Receivers = Photon.Realtime.ReceiverGroup.Others }, sendOpts);
+        Debug.Log($"[GameManager] Start-Soldaten gespawnt ({types.Length * 2}).");
     }
 
     private void RequestWorldState()
@@ -943,8 +866,9 @@ public class GameManager : MonoBehaviourPunCallbacks, IOnEventCallback
     {
         ExitGames.Client.Photon.Hashtable state = new ExitGames.Client.Photon.Hashtable();
 
-        // 1. Buildings (excluding MyWarehouse, EnemyWarehouse)
-        List<object> buildingsList = new List<object>();
+        // 1. Buildings (excluding MyWarehouse, EnemyWarehouse). Pro Gebaeude ein eigenes Array.
+        // { name, x, y, rot, w, h, isShip, shipId }
+        List<object> buildings = new List<object>();
         BuildingInstance[] allBuildings = FindObjectsOfType<BuildingInstance>();
         foreach (var b in allBuildings)
         {
@@ -952,14 +876,21 @@ public class GameManager : MonoBehaviourPunCallbacks, IOnEventCallback
             // Skip main warehouses (they are spawned by the late-joiner's SpawnPlayer loop)
             if (b.isPreBuiltLodging || b.name == "MyWarehouse" || b.name == "EnemyWarehouse") continue;
 
-            buildingsList.Add(b.data != null ? b.data.buildingName : b.name);
-            buildingsList.Add(b.transform.position.x);
-            buildingsList.Add(b.transform.position.y);
-            buildingsList.Add(Mathf.RoundToInt(b.transform.rotation.eulerAngles.z));
-            buildingsList.Add(b.footprintWidthOverride);
-            buildingsList.Add(b.footprintHeightOverride);
+            Ship ship = b.GetComponent<Ship>();
+            int shipId = ship != null ? ship.ShipNetId : 0;
+
+            buildings.Add(new object[]
+            {
+                b.data != null ? b.data.buildingName : b.name,
+                b.transform.position.x,
+                b.transform.position.y,
+                Mathf.RoundToInt(b.transform.rotation.eulerAngles.z),
+                b.footprintWidthOverride,
+                b.footprintHeightOverride,
+                shipId
+            });
         }
-        state.Add((byte)0, buildingsList.ToArray());
+        state.Add((byte)0, buildings.ToArray());
 
         // 2. Stegs (that do not have a BuildingInstance on the same gameobject)
         List<object> stegsList = new List<object>();
@@ -974,27 +905,37 @@ public class GameManager : MonoBehaviourPunCallbacks, IOnEventCallback
         }
         state.Add((byte)1, stegsList.ToArray());
 
-        // 3. Villagers
+        // 3. Villagers — nur die VILLAGERS, die auf diesem Master existieren.
+        // { id, role, x, y, active } — Besitzer steckt in der ID (actor * 1M).
         List<object> villagersList = new List<object>();
         Villager[] allVillagers = FindObjectsOfType<Villager>();
         foreach (var v in allVillagers)
         {
-            if (v == null) continue;
-            villagersList.Add((int)v.role);
-            villagersList.Add(v.transform.position.x);
-            villagersList.Add(v.transform.position.y);
+            if (v == null || !v.gameObject.activeInHierarchy) continue;
+            villagersList.Add(new object[]
+            {
+                v.VillagerNetworkId,
+                (int)v.role,
+                v.transform.position.x,
+                v.transform.position.y,
+                v.IsVisibleToNetwork ? 1 : 0
+            });
         }
         state.Add((byte)2, villagersList.ToArray());
 
-        // 4. Soldiers
+        // 4. Soldiers — { netId, type, material, x, y } (owner steckt in der netId)
         List<object> soldiersList = new List<object>();
         foreach (var s in Soldier.ActiveSoldiers)
         {
             if (s == null) continue;
-            soldiersList.Add(s.netId);
-            soldiersList.Add((int)s.soldierType);
-            soldiersList.Add(s.transform.position.x);
-            soldiersList.Add(s.transform.position.y);
+            soldiersList.Add(new object[]
+            {
+                s.netId,
+                (int)s.soldierType,
+                (int)s.weaponMaterial,
+                s.transform.position.x,
+                s.transform.position.y
+            });
         }
         state.Add((byte)3, soldiersList.ToArray());
 
@@ -1011,21 +952,25 @@ public class GameManager : MonoBehaviourPunCallbacks, IOnEventCallback
         // 1. Spawning buildings
         if (stateData.TryGetValue((byte)0, out object buildingsObj) && buildingsObj is object[] buildings)
         {
-            for (int i = 0; i + 5 < buildings.Length; i += 6)
+            foreach (object entryObj in buildings)
             {
-                string name = (string)buildings[i];
-                float x = (float)buildings[i + 1];
-                float y = (float)buildings[i + 2];
-                int rot = (int)buildings[i + 3];
-                int w = (int)buildings[i + 4];
-                int h = (int)buildings[i + 5];
+                if (!(entryObj is object[] entry) || entry.Length < 7) continue;
+
+                string name = (string)entry[0];
+                float x = (float)entry[1];
+                float y = (float)entry[2];
+                int rot = (int)entry[3];
+                int w = (int)entry[4];
+                int h = (int)entry[5];
+                int shipId = (int)entry[6];
 
                 if (BuildingManager.Instance != null)
                 {
                     BuildingData bData = BuildingManager.Instance.GetBuildingDataByName(name);
                     if (bData != null)
                     {
-                        BuildingManager.Instance.SpawnBuilding(bData, new Vector2(x, y), false, rot, w, h);
+                        BuildingManager.Instance.SpawnBuilding(bData, new Vector2(x, y), false, rot, w, h, shipId);
+                        IslandManager.RemoveResourceNodeAt(new Vector2(x, y));
                     }
                 }
             }
@@ -1048,14 +993,20 @@ public class GameManager : MonoBehaviourPunCallbacks, IOnEventCallback
         // 3. Spawning villagers
         if (stateData.TryGetValue((byte)2, out object villagersObj) && villagersObj is object[] villagers)
         {
-            for (int i = 0; i + 2 < villagers.Length; i += 3)
+            foreach (object entryObj in villagers)
             {
-                Villager.Role role = (Villager.Role)(int)villagers[i];
-                float x = (float)villagers[i + 1];
-                float y = (float)villagers[i + 2];
+                if (!(entryObj is object[] entry) || entry.Length < 5) continue;
+
+                int villagerId = (int)entry[0];
+                Villager.Role role = (Villager.Role)(int)entry[1];
+                float x = (float)entry[2];
+                float y = (float)entry[3];
+                int active = (int)entry[4];
+
                 if (VillagerManager.Instance != null)
                 {
-                    VillagerManager.Instance.SpawnVillagerAt(new Vector2(x, y), role, false);
+                    VillagerManager.Instance.SpawnRemoteVillager(villagerId, new Vector2(x, y), role,
+                        NetCombat.OwnerFromId(villagerId), active > 0);
                 }
             }
         }
@@ -1063,13 +1014,18 @@ public class GameManager : MonoBehaviourPunCallbacks, IOnEventCallback
         // 4. Spawning soldiers
         if (stateData.TryGetValue((byte)3, out object soldiersObj) && soldiersObj is object[] soldiers)
         {
-            for (int i = 0; i + 3 < soldiers.Length; i += 4)
+            foreach (object entryObj in soldiers)
             {
-                int netId = (int)soldiers[i];
-                SoldierType type = (SoldierType)(int)soldiers[i + 1];
-                float x = (float)soldiers[i + 2];
-                float y = (float)soldiers[i + 3];
-                SpawnRemoteSoldier(new Vector3(x, y, 0f), type, netId);
+                if (!(entryObj is object[] entry) || entry.Length < 5) continue;
+
+                int netId = (int)entry[0];
+                SoldierType type = (SoldierType)(int)entry[1];
+                WeaponMaterial material = (WeaponMaterial)(int)entry[2];
+                float x = (float)entry[3];
+                float y = (float)entry[4];
+
+                NetCombat.SpawnSoldier(type, material, new Vector3(x, y, 0f),
+                    NetCombat.OwnerFromId(netId), false, netId);
             }
         }
 

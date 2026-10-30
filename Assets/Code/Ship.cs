@@ -1,25 +1,29 @@
 using UnityEngine;
 using System.Collections.Generic;
-using System.Linq;
 using Photon.Pun;
 
 public class Ship : MonoBehaviour
 {
+    public static readonly List<Ship> ActiveShips = new List<Ship>();
+
     [Header("Ship Configuration")]
     public ShipData shipData;
     public int shipLevel = 1;
     public bool isLocal = true;
-    
+
+    [Header("Multiplayer Sync")]
+    public Vector2Int spawnOrigin;
+    private int shipNetId;      // 0 = nicht initialisiert
+
     [Header("Cargo System")]
     public List<ShipSlot> slots = new List<ShipSlot>();
-    
+
     [Header("Movement")]
     public float moveSpeed = 2f;
     public float rotationSpeed = 180f;
     private Vector3 targetPosition;
     private bool isMoving = false;
     private float movementStartTime;
-    private bool isSelected = false;
     private float targetAngle = 0f;
     private float currentAngle = 0f;
     private List<Vector2> waterPath = new List<Vector2>();
@@ -28,24 +32,45 @@ public class Ship : MonoBehaviour
     [Header("Health")]
     public int maxHP = 180;
     public int currentHP = 180;
-    
+
     [Header("Crew")]
-    public Villager assignedCrew;  // The villager sailing this ship
-    
-    [Header("Multiplayer Sync")]
-    public Vector2Int spawnOrigin;
+    public Villager assignedCrew;
+
     private float syncTimer = 0f;
     private const float SyncInterval = 0.15f;
+
+    // Fog: nur beim Wechsel der Grid-Zelle aktualisieren
+    private Vector2Int lastFogCell;
+    private bool hasFogCell;
 
     [Header("Visual")]
     private SpriteRenderer spriteRenderer;
     private Color originalColor;
     public Color selectedColor = new Color(0.3f, 0.85f, 1f, 1f);
-    
+
+    private bool isSelected = false;
+
     // Events
     public System.Action<Ship> OnShipClicked;
     public System.Action OnCargoChanged;
-    
+
+    private int lastBroadcastCargoUsed = -1;
+
+    public int ShipNetId => shipNetId;
+
+    public bool IsAuthority => isLocal;
+
+    // Basisfarbe (tintet fremde Schiffe rot – von BuildingManager gesetzt)
+    [HideInInspector] public Color baseColor;
+    private bool hasBaseColor;
+
+    public void SetBaseColor(Color c)
+    {
+        baseColor = c;
+        hasBaseColor = true;
+        originalColor = c;
+    }
+
     private void Awake()
     {
         spriteRenderer = GetComponent<SpriteRenderer>();
@@ -55,6 +80,29 @@ public class Ship : MonoBehaviour
         }
 
         currentAngle = transform.rotation.eulerAngles.z;
+        lastFogCell = new Vector2Int(Mathf.RoundToInt(transform.position.x), Mathf.RoundToInt(transform.position.y));
+        hasFogCell = true;
+    }
+
+    private void OnEnable()
+    {
+        ActiveShips.Add(this);
+        if (shipNetId != 0) NetCombat.RegisterShip(this);
+    }
+
+    private void OnDisable()
+    {
+        ActiveShips.Remove(this);
+        if (shipNetId != 0) NetCombat.UnregisterShip(this);
+    }
+
+    public void AssignNetId(int id)
+    {
+        if (id > 0)
+        {
+            shipNetId = id;
+            NetCombat.RegisterShip(this);
+        }
     }
 
     public void SyncFromData()
@@ -94,12 +142,11 @@ public class Ship : MonoBehaviour
             _ => 8
         };
     }
-    
+
     private void Start()
     {
         SyncFromData();
 
-        // Add click detector
         var collider = GetComponent<Collider2D>();
         if (collider == null)
         {
@@ -107,11 +154,20 @@ public class Ship : MonoBehaviour
             bc.size = new Vector2(1.5f, 1.5f);
         }
 
-        // Subscribe to cargo changes
         OnCargoChanged += UpdateVisualState;
 
-        // Automatisch einen arbeitslosen Dorfbewohner als Besatzung zuweisen
-        if (!HasCrew() && VillagerManager.Instance != null)
+        if (shipNetId == 0 && isLocal)
+        {
+            // Nachtraeglich (alte Spawnpfade): lokale Schiffe vergeben selbst eine ID.
+            shipNetId = NetCombat.NextId(NetCombat.LocalActorId);
+        }
+        if (shipNetId != 0)
+        {
+            NetCombat.RegisterShip(this);
+        }
+
+        // Besatzung nur vom BESITZER vergeben (kein Zweit-Crew auf anderen Clients!)
+        if (isLocal && !HasCrew() && VillagerManager.Instance != null)
         {
             AssignFirstAvailableVillager();
         }
@@ -121,47 +177,133 @@ public class Ship : MonoBehaviour
     {
         if (spriteRenderer != null)
         {
-            int used = slots.Count(s => !s.IsEmpty);
+            int used = 0;
+            for (int i = 0; i < slots.Count; i++) if (!slots[i].IsEmpty) used++;
             int total = slots.Count;
             float ratio = total > 0 ? (float)used / total : 0f;
             spriteRenderer.color = Color.Lerp(originalColor, selectedColor, ratio * 0.3f);
         }
     }
-    
+
     private void Update()
     {
         HandleMovement();
-        HandleClickDetection();
-        BroadcastPosition();
-    }
-    
-    private void HandleClickDetection()
-    {
-        if (!isLocal) return;
-        
-        // Check if mouse is over this ship
-        Vector2 mouseWorldPos = Camera.main.ScreenToWorldPoint(UnityEngine.InputSystem.Mouse.current.position.ReadValue());
-        Collider2D hit = Physics2D.OverlapPoint(mouseWorldPos);
-        
-        if (hit != null && hit.gameObject == gameObject)
+
+        if (isLocal)
         {
-            if (UnityEngine.InputSystem.Mouse.current.leftButton.wasPressedThisFrame)
-            {
-                // Check if shift is held for multi-select, otherwise single click
-                if (UnityEngine.InputSystem.Keyboard.current.shiftKey.isPressed)
-                {
-                    ToggleSelection();
-                }
-                else
-                {
-                    SelectShip();
-                }
-            }
+            HandleClickDetection();
+            BroadcastPosition();
+        }
+        else
+        {
+            InterpolateRemoteState();
         }
     }
-    
+
+    // ── Netz-Sync (Event 14) ──────────────────────────────────────────────
+    private Vector3 remoteTargetPosition;
+    private float remoteTargetRot;
+    private int remoteCargoUsed;
+    private bool remoteMoving;
+    private bool hasRemoteState;
+
+    private const byte NetFlagMoving = 1;
+
+    public void ApplyNetState(object[] data)
+    {
+        if (data == null || data.Length < 5) return;
+        // { shipId, x, y, rot, flags, cargoUsed }
+        float nx = (float)data[1];
+        float ny = (float)data[2];
+        remoteTargetRot = (float)data[3];
+        float flags = (float)data[4];
+        remoteMoving = flags >= 0.5f;
+        remoteCargoUsed = data.Length > 5 ? (int)data[5] : -1;
+
+        remoteTargetPosition = new Vector3(nx, ny, transform.position.z);
+        hasRemoteState = true;
+
+        if (remoteCargoUsed >= 0 && remoteCargoUsed != remoteCargoAppliedCount)
+        {
+            remoteCargoAppliedCount = remoteCargoUsed;
+            VisualizeCargoUsed(remoteCargoUsed);
+        }
+    }
+
+    private int remoteCargoAppliedCount = -1;
+
+    private void InterpolateRemoteState()
+    {
+        if (!hasRemoteState) return;
+
+        float distance = Vector2.Distance(transform.position, remoteTargetPosition);
+        if (distance > 4f)
+        {
+            transform.position = remoteTargetPosition;
+            currentAngle = remoteTargetRot;
+        }
+        else if (distance > 0.05f)
+        {
+            transform.position = Vector3.MoveTowards(transform.position, remoteTargetPosition,
+                moveSpeed * 1.6f * Time.deltaTime);
+
+            float angleDiff = Mathf.DeltaAngle(currentAngle, remoteTargetRot);
+            float rotationStep = rotationSpeed * 1.4f * Time.deltaTime;
+            if (Mathf.Abs(angleDiff) < rotationStep)
+                currentAngle = remoteTargetRot;
+            else
+                currentAngle += Mathf.Sign(angleDiff) * rotationStep;
+        }
+        else if (!remoteMoving && Vector2.Distance(transform.position, remoteTargetPosition) > 0.01f)
+        {
+            transform.position = remoteTargetPosition;
+            currentAngle = remoteTargetRot;
+        }
+
+        transform.rotation = Quaternion.Euler(0f, 0f, currentAngle);
+    }
+
+    private void VisualizeCargoUsed(int used)
+    {
+        if (spriteRenderer == null) return;
+        if (isSelected) return;
+        Color baseCol = hasBaseColor ? baseColor : originalColor;
+        int total = slots.Count > 0 ? slots.Count : 8;
+        float ratio = total > 0 ? Mathf.Clamp01((float)used / total) : 0f;
+        spriteRenderer.color = Color.Lerp(baseCol, selectedColor, ratio * 0.3f);
+    }
+
+    private void BroadcastPosition()
+    {
+        if (!PhotonNetwork.InRoom) return;
+        if (!isMoving) return;
+
+        syncTimer += Time.deltaTime;
+        if (syncTimer < SyncInterval) return;
+        syncTimer = 0f;
+
+        SendSyncEvent(NetFlagMoving);
+    }
+
+    private void SendSyncEvent(float movingFlag)
+    {
+        object[] data = new object[]
+        {
+            shipNetId,
+            transform.position.x,
+            transform.position.y,
+            transform.rotation.eulerAngles.z,
+            movingFlag,
+            GetUsedSlotCount()
+        };
+        NetCombat.Raise(14, data, false);
+    }
+
+    // ── Bewegung ─────────────────────────────────────────────────────────
     private void HandleMovement()
     {
+        if (!isLocal) return; // nur der BESITZER simuliert die Fahrt
+
         if (!isMoving) return;
 
         if (waterPath.Count == 0)
@@ -179,10 +321,10 @@ public class Ship : MonoBehaviour
         {
             target = targetPosition;
         }
-        
+
         Vector3 direction = target - transform.position;
         direction.z = 0;
-        
+
         if (direction.magnitude < 0.3f)
         {
             if (waterPathIndex < waterPath.Count)
@@ -204,20 +346,11 @@ public class Ship : MonoBehaviour
                 "Schiff gestrandet!", 5f);
             return;
         }
-        
-        targetAngle = Mathf.Atan2(direction.y, direction.x) * Mathf.Rad2Deg - 90f;
-        
-        float angleDiff = Mathf.DeltaAngle(currentAngle, targetAngle);
-        float rotationStep = rotationSpeed * Time.deltaTime;
-        
-        if (Mathf.Abs(angleDiff) < rotationStep)
-            currentAngle = targetAngle;
-        else
-            currentAngle += Mathf.Sign(angleDiff) * rotationStep;
-        
+
+        currentAngle = RotateTowards(direction);
         transform.rotation = Quaternion.Euler(0f, 0f, currentAngle);
         transform.position += transform.up * moveSpeed * Time.deltaTime;
-        
+
         RevealFogAlongPath();
     }
 
@@ -240,16 +373,20 @@ public class Ship : MonoBehaviour
             return;
         }
 
-        targetAngle = Mathf.Atan2(direction.y, direction.x) * Mathf.Rad2Deg - 90f;
-        float angleDiff = Mathf.DeltaAngle(currentAngle, targetAngle);
-        float rotationStep = rotationSpeed * Time.deltaTime;
-        if (Mathf.Abs(angleDiff) < rotationStep)
-            currentAngle = targetAngle;
-        else
-            currentAngle += Mathf.Sign(angleDiff) * rotationStep;
-
+        currentAngle = RotateTowards(direction);
         transform.rotation = Quaternion.Euler(0f, 0f, currentAngle);
         transform.position += transform.up * moveSpeed * Time.deltaTime;
+    }
+
+    private float RotateTowards(Vector3 direction)
+    {
+        float targetRot = Mathf.Atan2(direction.y, direction.x) * Mathf.Rad2Deg - 90f;
+        float angleDiff = Mathf.DeltaAngle(currentAngle, targetRot);
+        float rotationStep = rotationSpeed * Time.deltaTime;
+
+        if (Mathf.Abs(angleDiff) < rotationStep)
+            return targetRot;
+        return currentAngle + Mathf.Sign(angleDiff) * rotationStep;
     }
 
     private bool IsOnLand()
@@ -257,9 +394,11 @@ public class Ship : MonoBehaviour
         Vector2Int grid = new Vector2Int(Mathf.RoundToInt(transform.position.x), Mathf.RoundToInt(transform.position.y));
         return IslandManager.IsLand(grid);
     }
-    
+
     public void MoveTo(Vector3 destination)
     {
+        if (!isLocal) return; // nur der Besitzer steuert sein Schiff
+
         if (!HasCrew())
         {
             AssignFirstAvailableVillager();
@@ -271,24 +410,21 @@ public class Ship : MonoBehaviour
             NotificationManager.Instance?.Notify("ship_no_crew", "Ein Schiff braucht einen Dorfbewohner um zu fahren!", 5f);
             return;
         }
-        
+
         Vector2Int destGrid = new Vector2Int(Mathf.RoundToInt(destination.x), Mathf.RoundToInt(destination.y));
-        
+
         if (IslandManager.IsLand(destGrid))
         {
             destination = FindNearestWater(destination);
         }
-        
+
         targetPosition = new Vector3(destination.x, destination.y, transform.position.z);
-        
+
         waterPath = BuildingManager.FindWaterPath(transform.position, destination);
         waterPathIndex = 0;
         movementStartTime = Time.time;
         isMoving = true;
-        
-        Debug.Log($"[Ship] Moving to {destination}, path length: {waterPath.Count}");
     }
-    
 
     private Vector3 FindNearestWater(Vector3 landPos)
     {
@@ -303,19 +439,14 @@ public class Ship : MonoBehaviour
                 {
                     if (Mathf.Abs(dx) != r && Mathf.Abs(dy) != r) continue;
                     Vector2Int test = new Vector2Int(center.x + dx, center.y + dy);
-                    if (BuildingManager.IsWalkable(test))
+                    if (IslandManager.IsLand(test))
                     {
-                        Vector3 nearest = new Vector3(test.x, test.y, landPos.z);
-                        if (IslandManager.IsLand(test))
+                        Vector2Int[] dirs = { Vector2Int.up, Vector2Int.down, Vector2Int.left, Vector2Int.right };
+                        foreach (var d in dirs)
                         {
-                            // Check adjacent water
-                            Vector2Int[] dirs = { Vector2Int.up, Vector2Int.down, Vector2Int.left, Vector2Int.right };
-                            foreach (var d in dirs)
-                            {
-                                Vector2Int water = test + d;
-                                if (!IslandManager.IsLand(water))
-                                    return new Vector3(water.x, water.y, landPos.z);
-                            }
+                            Vector2Int water = test + d;
+                            if (!IslandManager.IsLand(water))
+                                return new Vector3(water.x, water.y, landPos.z);
                         }
                     }
                 }
@@ -333,134 +464,143 @@ public class Ship : MonoBehaviour
         if (v != null)
         {
             AssignCrew(v);
-            Debug.Log($"[Ship] Auto-assigned villager {v.name} as crew");
         }
     }
-    
+
     private void StopMovement()
     {
         isMoving = false;
         RevealAreaAroundShip();
-        if (isLocal && PhotonNetwork.InRoom)
+
+        if (isLocal)
         {
-            SendSyncEvent();
+            // Stopsignal an alle: Bewegungs-Flag 0 + Endposition
+            if (PhotonNetwork.InRoom)
+            {
+                SendSyncEvent(0f);
+            }
         }
     }
-    
+
     public void StopMovementCommand()
     {
         isMoving = false;
-    }
-
-    private void BroadcastPosition()
-    {
-        if (!isLocal || !PhotonNetwork.InRoom) return;
-
-        if (!isMoving) return;
-
-        syncTimer += Time.deltaTime;
-        if (syncTimer < SyncInterval) return;
-        syncTimer = 0f;
-
-        SendSyncEvent();
-    }
-
-    private void SendSyncEvent()
-    {
-        Vector3 pos = transform.position;
-        float rot = transform.rotation.eulerAngles.z;
-        object[] data = new object[]
+        if (isLocal && PhotonNetwork.InRoom)
         {
-            (float)spawnOrigin.x,
-            (float)spawnOrigin.y,
-            pos.x,
-            pos.y,
-            rot
-        };
-        PhotonNetwork.RaiseEvent(14, data,
-            new Photon.Realtime.RaiseEventOptions { Receivers = Photon.Realtime.ReceiverGroup.Others },
-            new ExitGames.Client.Photon.SendOptions { Reliability = false });
+            SendSyncEvent(0f);
+        }
     }
-    
+
     private void RevealFogAlongPath()
     {
-        FogProjector.RegisterExploration(transform.position, 40f);
+        Vector2Int cell = new Vector2Int(Mathf.RoundToInt(transform.position.x), Mathf.RoundToInt(transform.position.y));
+        if (!hasFogCell || cell != lastFogCell)
+        {
+            lastFogCell = cell;
+            hasFogCell = true;
+            FogProjector.RegisterExploration(transform.position, 12f);
+        }
     }
-    
+
     private void RevealAreaAroundShip()
     {
-        FogProjector.RegisterExploration(transform.position, 50f);
+        FogProjector.RegisterExploration(transform.position, 12f);
     }
-    
+
+    // ── Klick / Auswahl ──────────────────────────────────────────────────
+    private void HandleClickDetection()
+    {
+        var mouse = UnityEngine.InputSystem.Mouse.current;
+        if (mouse == null || Camera.main == null) return;
+
+        Vector2 mouseWorldPos = Camera.main.ScreenToWorldPoint(mouse.position.ReadValue());
+        Collider2D hit = Physics2D.OverlapPoint(mouseWorldPos);
+
+        if (hit != null && hit.gameObject == gameObject)
+        {
+            if (UnityEngine.InputSystem.Mouse.current.leftButton.wasPressedThisFrame)
+            {
+                if (UnityEngine.InputSystem.Keyboard.current != null && UnityEngine.InputSystem.Keyboard.current.shiftKey.isPressed)
+                {
+                    ToggleSelection();
+                }
+                else
+                {
+                    SelectShip();
+                }
+            }
+        }
+    }
+
     private void SelectShip()
     {
-        // Deselect all other ships first
-        Ship[] allShips = FindObjectsOfType<Ship>();
-        foreach (Ship s in allShips)
+        for (int i = 0; i < ActiveShips.Count; i++)
         {
-            s.isSelected = false;
-            s.UpdateVisualSelection();
+            Ship s = ActiveShips[i];
+            if (s != null)
+            {
+                s.isSelected = false;
+                s.UpdateVisualSelection();
+            }
         }
-        
+
         isSelected = true;
         UpdateVisualSelection();
-        
-        // Open ship UI panel — auto-create if not in scene (wie BuildingInfoPanel)
+
         ShipCargoUI cargoUI = ShipCargoUI.Instance;
         if (cargoUI == null)
         {
-            cargoUI = FindObjectOfType<ShipCargoUI>();
+            cargoUI = FindAnyObjectByType<ShipCargoUI>();
         }
         if (cargoUI == null)
         {
             GameObject go = new GameObject("ShipCargoUI");
             cargoUI = go.AddComponent<ShipCargoUI>();
-            Debug.Log("[Ship] ShipCargoUI auto-erstellt.");
         }
         cargoUI.ShowShipUI(this);
     }
-    
+
     private void ToggleSelection()
     {
         isSelected = !isSelected;
         UpdateVisualSelection();
-        
+
         if (isSelected)
         {
             OnShipClicked?.Invoke(this);
         }
     }
-    
+
     private void UpdateVisualSelection()
     {
         if (spriteRenderer == null) return;
-        
+
         if (isSelected)
         {
             spriteRenderer.color = selectedColor;
         }
         else
         {
-            spriteRenderer.color = originalColor;
+            VisualizeCargoUsed(GetUsedSlotCount());
         }
     }
-    
-    // ── Cargo System (New Slot-Based) ─────────────────────────────────────
+
+    // ── Cargo System (Slot-basiert) ──────────────────────────────────────
 
     public bool HasCrew()
     {
         return assignedCrew != null;
     }
-    
+
     public bool AssignCrew(Villager villager)
     {
         if (assignedCrew != null) return false;
-        
+
         assignedCrew = villager;
         villager.AssignToShip(this);
         return true;
     }
-    
+
     public void ReleaseCrew()
     {
         if (assignedCrew != null)
@@ -470,17 +610,32 @@ public class Ship : MonoBehaviour
         }
     }
 
-    // ── Slot Management ──────────────────────────────────────────────────
+    // ── Slot Management ───────────────────────────────────────────────────
 
     public int GetSlotCount() => slots.Count;
 
-    public int GetUsedSlotCount() => slots.Count(s => !s.IsEmpty);
+    public int GetUsedSlotCount()
+    {
+        int used = 0;
+        for (int i = 0; i < slots.Count; i++) if (!slots[i].IsEmpty) used++;
+        return used;
+    }
 
-    public int GetFreeSlotCount() => slots.Count(s => s.IsEmpty);
+    public int GetFreeSlotCount()
+    {
+        int free = 0;
+        for (int i = 0; i < slots.Count; i++) if (slots[i].IsEmpty) free++;
+        return free;
+    }
 
     public bool HasFreeSlot() => GetFreeSlotCount() > 0;
 
-    public int GetCargoCount() => slots.Count(s => s.content == ShipSlot.SlotContent.Material);
+    public int GetCargoCount()
+    {
+        int count = 0;
+        for (int i = 0; i < slots.Count; i++) if (slots[i].content == ShipSlot.SlotContent.Material) count++;
+        return count;
+    }
 
     public int GetCargoCapacity() => slots.Count;
 
@@ -488,7 +643,12 @@ public class Ship : MonoBehaviour
 
     public bool CanAddCargo() => HasFreeSlot();
 
-    public List<ShipSlot> GetAllSlots() => new List<ShipSlot>(slots);
+    public List<ShipSlot> GetAllSlots()
+    {
+        var result = new List<ShipSlot>(slots.Count);
+        for (int i = 0; i < slots.Count; i++) result.Add(slots[i]);
+        return result;
+    }
 
     public Dictionary<string, int> GetAllCargoGrouped()
     {
@@ -518,13 +678,15 @@ public class Ship : MonoBehaviour
         return list;
     }
 
-    // ── Loading ──────────────────────────────────────────────────────────
+    // ── Loading ───────────────────────────────────────────────────────────
 
     public bool TryLoadMaterial(string resourceId, int amount)
     {
+        if (!isLocal) return false; // nur der Besitzer belaedt seine Schiffe
+
         int remaining = amount;
 
-        // Erst vorhandene Slots mit gleichem Material auffüllen (max 16)
+        // Erst vorhandene Slots mit gleichem Material auffuellen (max 16)
         foreach (var slot in slots)
         {
             if (slot.content == ShipSlot.SlotContent.Material && slot.resourceId == resourceId && slot.amount < 16)
@@ -532,11 +694,15 @@ public class Ship : MonoBehaviour
                 int canAdd = Mathf.Min(remaining, 16 - slot.amount);
                 slot.amount += canAdd;
                 remaining -= canAdd;
-                if (remaining <= 0) { OnCargoChanged?.Invoke(); return true; }
+                if (remaining <= 0)
+                {
+                    OnCargoChanged?.Invoke();
+                    BroadcastCargoState();
+                    return true;
+                }
             }
         }
 
-        // Dann leere Slots belegen
         foreach (var slot in slots)
         {
             if (slot.IsEmpty)
@@ -546,16 +712,30 @@ public class Ship : MonoBehaviour
                 slot.resourceId = resourceId;
                 slot.amount = toLoad;
                 remaining -= toLoad;
-                if (remaining <= 0) { OnCargoChanged?.Invoke(); return true; }
+                if (remaining <= 0)
+                {
+                    OnCargoChanged?.Invoke();
+                    BroadcastCargoState();
+                    return true;
+                }
             }
         }
 
         OnCargoChanged?.Invoke();
+        BroadcastCargoState();
         return remaining < amount;
+    }
+
+    private void BroadcastCargoState()
+    {
+        if (!isLocal || !PhotonNetwork.InRoom) return;
+        SendSyncEvent(isMoving ? NetFlagMoving : 0f); // inkl. aktuellem Ladestand
     }
 
     public bool TryLoadBuilder()
     {
+        if (!isLocal) return false;
+
         foreach (var slot in slots)
         {
             if (slot.IsEmpty)
@@ -591,6 +771,7 @@ public class Ship : MonoBehaviour
                 slot.amount = 1;
                 slot.villager = freeWorker;
                 OnCargoChanged?.Invoke();
+                BroadcastCargoState();
                 return true;
             }
         }
@@ -602,8 +783,10 @@ public class Ship : MonoBehaviour
         if (VillagerManager.Instance == null) return null;
         Villager best = null;
         float bestDist = float.MaxValue;
-        foreach (var v in VillagerManager.Instance.ActiveVillagers)
+        var list = VillagerManager.Instance.ActiveVillagers;
+        for (int i = 0; i < list.Count; i++)
         {
+            var v = list[i];
             if (v == null || !v.gameObject.activeSelf) continue;
             if (v.role != Villager.Role.Worker) continue;
             if (v.assignedShip != null) continue;
@@ -623,8 +806,10 @@ public class Ship : MonoBehaviour
         if (VillagerManager.Instance == null) return null;
         Villager best = null;
         float bestDist = float.MaxValue;
-        foreach (var v in VillagerManager.Instance.ActiveVillagers)
+        var list = VillagerManager.Instance.ActiveVillagers;
+        for (int i = 0; i < list.Count; i++)
         {
+            var v = list[i];
             if (v == null || !v.gameObject.activeSelf) continue;
             if (v.role == Villager.Role.Worker) continue;
             if (v.assignedShip != null) continue;
@@ -641,6 +826,8 @@ public class Ship : MonoBehaviour
 
     public bool TryLoadSoldier(SoldierType type)
     {
+        if (!isLocal) return false;
+
         Soldier available = FindNearestSoldier(type);
         if (available == null)
         {
@@ -659,6 +846,7 @@ public class Ship : MonoBehaviour
                 slot.loadedSoldierRef = available;
                 available.gameObject.SetActive(false);
                 OnCargoChanged?.Invoke();
+                BroadcastCargoState();
                 return true;
             }
         }
@@ -667,15 +855,17 @@ public class Ship : MonoBehaviour
 
     private Soldier FindNearestSoldier(SoldierType type)
     {
-        Soldier[] allSoldiers = FindObjectsByType<Soldier>(FindObjectsSortMode.None);
+        // Soldaten-Registrierung statt FindObjectsByType
         Soldier best = null;
         float bestDist = float.MaxValue;
 
-        foreach (var s in allSoldiers)
+        int actor = PhotonNetwork.InRoom ? PhotonNetwork.LocalPlayer.ActorNumber : 1;
+        foreach (var pair in NetCombat.SoldiersById)
         {
+            Soldier s = pair.Value;
             if (s == null || !s.gameObject.activeInHierarchy) continue;
             if (s.soldierType != type) continue;
-            if (s.team != Team.Player) continue;
+            if (NetCombat.OwnerFromId(pair.Key) != actor) continue;
             if (IsSoldierAlreadyLoaded(s)) continue;
 
             float d = Vector3.Distance(transform.position, s.transform.position);
@@ -697,10 +887,12 @@ public class Ship : MonoBehaviour
         return false;
     }
 
-    // ── Unloading ────────────────────────────────────────────────────────
+    // ── Unloading ─────────────────────────────────────────────────────────
 
     public void UnloadAllToIsland()
     {
+        if (!isLocal) return;
+
         Vector2 landPos = FindNearestLandCell(transform.position);
 
         foreach (var slot in slots)
@@ -713,7 +905,7 @@ public class Ship : MonoBehaviour
             }
             else if (slot.content == ShipSlot.SlotContent.Builder)
             {
-                Vector2 spawnPos = landPos + new Vector2(Random.Range(-0.5f, 0.5f), Random.Range(-0.5f, 0.5f));
+                Vector2 spawnPos = landPos;
                 if (slot.villager != null)
                 {
                     slot.villager.transform.position = spawnPos;
@@ -722,36 +914,29 @@ public class Ship : MonoBehaviour
                 }
                 else if (VillagerManager.Instance != null)
                 {
-                    VillagerManager.Instance.SpawnVillagerAt(spawnPos, Villager.Role.Worker);
+                    VillagerManager.Instance.SpawnVillagerAt(spawnPos, Villager.Role.Worker, true);
                 }
             }
             else if (slot.content == ShipSlot.SlotContent.Soldier)
             {
-                Vector2 spawnPos = landPos + new Vector2(Random.Range(-0.5f, 0.5f), Random.Range(-0.5f, 0.5f));
+                Vector2 spawnPos = landPos;
                 if (slot.loadedSoldierRef != null)
                 {
                     slot.loadedSoldierRef.transform.position = spawnPos;
                     slot.loadedSoldierRef.gameObject.SetActive(true);
+                    slot.loadedSoldierRef.transform.rotation = Quaternion.identity;
                 }
                 else
                 {
-                    GameObject solObj = new GameObject($"Unloaded_Soldier_{slot.soldierType}");
-                    solObj.transform.position = spawnPos;
-                    var sr = solObj.AddComponent<SpriteRenderer>();
-                    sr.sortingOrder = 21;
-                    solObj.AddComponent<BoxCollider2D>().size = new Vector2(1f, 1f);
-                    var s = solObj.AddComponent<Soldier>();
-                    s.soldierType = slot.soldierType;
-                    s.team = Team.Player;
-                    s.moveSpeed = 1.5f;
-                    FogRevealer fr = solObj.AddComponent<FogRevealer>();
-                    fr.radius = 4f;
-                    fr.isLocalPlayer = true;
+                    // Soldat auf dem gegnerischen Client war nicht geladen (normal, da leer) → neu erzeugen
+                    int actor = PhotonNetwork.InRoom ? PhotonNetwork.LocalPlayer.ActorNumber : 1;
+                    NetCombat.SpawnSoldier(slot.soldierType, WeaponMaterial.Stone, new Vector3(spawnPos.x, spawnPos.y, 0f), actor, true);
                 }
             }
             slot.Clear();
         }
         OnCargoChanged?.Invoke();
+        BroadcastCargoState();
     }
 
     private Vector2 FindNearestLandCell(Vector2 from)
@@ -779,6 +964,7 @@ public class Ship : MonoBehaviour
 
     public void RemoveSlotItem(int slotIndex)
     {
+        if (!isLocal) return;
         if (slotIndex >= 0 && slotIndex < slots.Count)
         {
             var slot = slots[slotIndex];
@@ -790,27 +976,36 @@ public class Ship : MonoBehaviour
             }
             slot.Clear();
             OnCargoChanged?.Invoke();
+            BroadcastCargoState();
         }
     }
 
-    // ── Warehouse Interop (alt, für Kompatibilität) ──────────────────────
+    // ── Warehouse Interop ─────────────────────────────────────────────────
 
     public void UnloadToWarehouse(Warehouse warehouse)
     {
+        if (!isLocal) return;
         if (warehouse == null) return;
+        bool changed = false;
         foreach (var slot in slots)
         {
             if (slot.content == ShipSlot.SlotContent.Material && !string.IsNullOrEmpty(slot.resourceId))
             {
                 warehouse.ReceiveResource(slot.resourceId, slot.amount);
                 slot.Clear();
+                changed = true;
             }
         }
-        OnCargoChanged?.Invoke();
+        if (changed)
+        {
+            OnCargoChanged?.Invoke();
+            BroadcastCargoState();
+        }
     }
 
     public void LoadFromWarehouse(Warehouse warehouse, string resourceId, int amount)
     {
+        if (!isLocal) return;
         if (warehouse == null) return;
         int toLoad = amount;
         while (toLoad > 0)
@@ -827,24 +1022,18 @@ public class Ship : MonoBehaviour
 
     public void ClearCargo()
     {
+        if (!isLocal) return;
         foreach (var slot in slots) slot.Clear();
         OnCargoChanged?.Invoke();
+        BroadcastCargoState();
     }
 
     private Warehouse FindNearestLocalWarehouse()
     {
-        Warehouse[] whs = FindObjectsOfType<Warehouse>();
-        Warehouse nearest = null;
-        float minDist = float.MaxValue;
-        foreach (var wh in whs)
-        {
-            if (wh.isLocal)
-            {
-                float dist = Vector3.Distance(transform.position, wh.transform.position);
-                if (dist < minDist) { minDist = dist; nearest = wh; }
-            }
-        }
-        return nearest;
+        // WarehouseManager-Register (konsol mit GetNearestLocalWarehouse) statt FindObjectsOfType
+        return WarehouseManager.Instance != null
+            ? WarehouseManager.Instance.GetNearestLocalWarehouse(transform.position)
+            : null;
     }
 
     public bool IsMoving() => isMoving;
@@ -856,18 +1045,55 @@ public class Ship : MonoBehaviour
     public bool IsTradeShip() => GetShipType() == ShipType.Trade;
     public bool IsMilitaryShip() => GetShipType() == ShipType.Military;
 
+    // ── Schaden / Zerstoerung (netzwerkfaehig) ────────────────────────────
+
+    /// <summary>Schaden verursachen. Authority (Besitzer des Schiffs) entscheidet ueber HP.</summary>
     public void TakeDamage(int damage)
+    {
+        NetCombat.ApplyShipDamage(this, damage);
+    }
+
+    /// <summary>Lokale HP-Anwendung (nur Clients mit Authority fuer dieses Schiff).</summary>
+    public void ApplyLocalDamage(int damage)
     {
         currentHP -= Mathf.Max(0, damage);
         if (currentHP <= 0)
         {
             currentHP = 0;
+            // NICHT NetDestroy() — wir sind der Zerstörer und MUSSEN via OnDestroy broadcasten!
             Destroy(gameObject);
+            return;
         }
     }
-    
+
+    /// <summary>Netzvernichtung (Event 25): ohne erneuten Broadcast.</summary>
+    public void NetDestroy()
+    {
+        destroyedByNet = true;
+        Destroy(gameObject);
+    }
+
+    private bool destroyedByNet;
+
     private void OnDestroy()
     {
+        if (shipNetId != 0)
+        {
+            NetCombat.UnregisterShip(this);
+
+            // Lokale Zerstoerung (nicht per Netz): an alle funken.
+            if (!destroyedByNet && !isQuitting && currentHP <= 0)
+            {
+                NetCombat.Raise(NetCombat.ShipDestroyEvent, new object[] { shipNetId }, true);
+            }
+        }
         ReleaseCrew();
+    }
+
+    private static bool isQuitting;
+
+    void OnApplicationQuit()
+    {
+        isQuitting = true;
     }
 }

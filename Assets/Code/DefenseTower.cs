@@ -3,10 +3,13 @@ using UnityEngine;
 public class DefenseTower : MonoBehaviour
 {
     private const int RangeCircleSegments = 96;
+    private const float TargetScanInterval = 0.3f;
 
     private BuildingInstance building;
     private LineRenderer rangeCircle;
     private float lastAttackTime;
+    private float targetScanTimer;
+    private Transform cachedTarget;
 
     private void Awake()
     {
@@ -23,10 +26,25 @@ public class DefenseTower : MonoBehaviour
         if (!building.IsCurrentlyWorkTime()) return;
         if (Time.time < lastAttackTime + building.data.towerAttackCooldown) return;
 
-        Transform target = FindTarget();
-        if (target == null) return;
+        // Zielsuche gedrosselt: alle 0.3s scannen statt jeden Frame alle entities anfassen
+        targetScanTimer -= Time.deltaTime;
+        if (targetScanTimer <= 0f)
+        {
+            targetScanTimer = TargetScanInterval;
+            cachedTarget = FindTarget();
+        }
 
-        ShootTarget(target);
+        if (cachedTarget == null) return;
+
+        // Ziel inzwischen verschwunden / außer Reichweite → verfallen lassen
+        if (!cachedTarget.gameObject.activeInHierarchy ||
+            Vector2.Distance(transform.position, cachedTarget.position) > building.data.towerRange)
+        {
+            cachedTarget = null;
+            return;
+        }
+
+        ShootTarget(cachedTarget);
         lastAttackTime = Time.time;
     }
 
@@ -36,13 +54,13 @@ public class DefenseTower : MonoBehaviour
         Transform closestTarget = null;
         float closestDistance = float.MaxValue;
 
-        foreach (Ship ship in FindObjectsOfType<Ship>())
+        foreach (Ship ship in Ship.ActiveShips)
         {
             if (ship == null || !ship.gameObject.activeInHierarchy || ship.isLocal == building.isLocal) continue;
             TryPickClosest(ship.transform, range, ref closestTarget, ref closestDistance);
         }
 
-        foreach (PlayerCombatHealth player in FindObjectsOfType<PlayerCombatHealth>())
+        foreach (PlayerCombatHealth player in PlayerCombatHealth.All)
         {
             if (player == null || !player.gameObject.activeInHierarchy || !player.IsHostileTo(building.isLocal)) continue;
             TryPickClosest(player.transform, range, ref closestTarget, ref closestDistance);
@@ -93,7 +111,8 @@ public class DefenseTower : MonoBehaviour
         Soldier soldier = target.GetComponent<Soldier>();
         if (soldier != null)
         {
-            soldier.TakeDamage(damage);
+            // Über NetCombat routen: Der BESITZER des Soldaten entscheidet über HP (Authority-Prinzip).
+            NetCombat.ApplySoldierDamage(soldier, damage);
         }
     }
 

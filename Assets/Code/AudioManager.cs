@@ -57,8 +57,16 @@ public class AudioManager : MonoBehaviour
             mainCam = Camera.main;
         }
 
-        UpdateNearPeopleAmbient();
+        // Ambient-Prüfung drosseln (vorher pro Frame inkl. Villager-Suche)
+        ambientTimer -= Time.deltaTime;
+        if (ambientTimer <= 0f)
+        {
+            ambientTimer = 0.25f;
+            UpdateNearPeopleAmbient();
+        }
     }
+
+    private float ambientTimer;
 
     public void PlaySelectSound()
     {
@@ -143,12 +151,17 @@ public class AudioManager : MonoBehaviour
             }
         }
 
-        Villager[] villagers = FindObjectsByType<Villager>();
-        for (int i = 0; i < villagers.Length; i++)
+        // Villager über den Manager (kein FindObjectsByType-Allokations-Rauschen pro Ändervorgang)
+        if (VillagerManager.Instance != null)
         {
-            if (villagers[i] != null && Vector2.Distance(camPos, villagers[i].transform.position) <= radius)
+            var activeVillagers = VillagerManager.Instance.ActiveVillagers;
+            for (int i = 0; i < activeVillagers.Count; i++)
             {
-                return true;
+                Villager v = activeVillagers[i];
+                if (v != null && Vector2.Distance(camPos, v.transform.position) <= radius)
+                {
+                    return true;
+                }
             }
         }
 
