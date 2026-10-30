@@ -1,13 +1,43 @@
 using UnityEngine;
+using Photon.Pun;
+using Photon.Realtime;
+using ExitGames.Client.Photon;
 
 public class ArrowProjectile : MonoBehaviour
 {
+    /// <summary>Projektil-Spawn für andere Clients: { from.x, from.y, to.x, to.y }</summary>
+    public const byte ArrowSpawnEventCode = 26;
+
     private static Sprite fallbackSprite;
 
     private Vector3 targetPosition;
     private float speed;
 
     public static void Spawn(Vector3 from, Vector3 to)
+    {
+        SpawnLocalProjectile(from, to);
+
+        // Andere Clients bekommen das Projektil mit (z.B. Turmpfeile, Soldaten-Pfeile).
+        // Empfänger ruft SpawnFromNet auf -> dort wird NICHT erneut gebroadcastet.
+        if (PhotonNetwork.InRoom)
+        {
+            PhotonNetwork.RaiseEvent(ArrowSpawnEventCode,
+                new object[] { from.x, from.y, to.x, to.y },
+                new RaiseEventOptions { Receivers = ReceiverGroup.Others },
+                new SendOptions { Reliability = false });
+        }
+    }
+
+    /// <summary>Empfängerseite (NetCombatRunner, Event 26): Projektil nur anzeigen, nicht weitersenden.</summary>
+    public static void SpawnFromNet(object[] data)
+    {
+        if (data == null || data.Length < 4) return;
+        Vector3 from = new Vector3((float)data[0], (float)data[1]);
+        Vector3 to = new Vector3((float)data[2], (float)data[3]);
+        SpawnLocalProjectile(from, to);
+    }
+
+    private static void SpawnLocalProjectile(Vector3 from, Vector3 to)
     {
         GameObject arrow = new GameObject("ArrowProjectile");
         arrow.transform.position = from;

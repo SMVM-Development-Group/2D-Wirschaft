@@ -259,6 +259,9 @@ public class NetCombatRunner : MonoBehaviour, IOnEventCallback
             case NetCombat.SoldierDamageEvent:
                 if (photonEvent.CustomData is object[] dmgData) NetCombat.ReceiveSoldierDamage(dmgData);
                 break;
+            case ArrowProjectile.ArrowSpawnEventCode:
+                if (photonEvent.CustomData is object[] arrowData) ArrowProjectile.SpawnFromNet(arrowData);
+                break;
             case NetCombat.SoldierDieEvent:
                 if (photonEvent.CustomData is object[] dieData) NetCombat.ReceiveSoldierDie(dieData);
                 break;

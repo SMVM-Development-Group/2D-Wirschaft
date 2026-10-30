@@ -104,10 +104,12 @@ public class Soldier : MonoBehaviour
     private Vector3 syncTargetPosition;
     private float syncTargetHealth;
     private float syncSendTimer;
+    private float stateHeartbeatTimer;
     private float lastSentHealth;
     private Vector3 lastSentPosition;
     private const float StateInterval = 0.15f;
     private const float StateMoveThreshold = 0.25f;
+    private const float StateHeartbeatInterval = 1.0f; // Position/HP auch fuer STILLE Soldaten periodisch syncen
 
     // ── Suchtimer (Performance) ───────────────────────────────────────────
     private float targetRescanTimer;
@@ -980,7 +982,11 @@ public class Soldier : MonoBehaviour
         bool moved = (pos - lastSentPosition).sqrMagnitude >= StateMoveThreshold * StateMoveThreshold;
         bool hpChanged = Mathf.Abs(currentHealth - lastSentHealth) > 0.01f;
 
-        if (!moved && !hpChanged) return;
+        // Heartbeat: auch bei stehenden Soldaten spaetestens alle 1s senden, damit
+        // Remote-Kopien nie auf einer veralteten/falschen Position haengen bleiben.
+        stateHeartbeatTimer += Time.deltaTime;
+        if (!moved && !hpChanged && stateHeartbeatTimer < StateHeartbeatInterval) return;
+        stateHeartbeatTimer = 0f;
 
         syncSendTimer += Time.deltaTime;
         if (syncSendTimer < StateInterval) return;
