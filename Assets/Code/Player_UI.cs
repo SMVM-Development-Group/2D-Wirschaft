@@ -1550,7 +1550,10 @@ public class Player_UI : MonoBehaviour
         int activeVillagerCount = 0;
         if (VillagerManager.Instance != null && VillagerManager.Instance.ActiveVillagers != null)
         {
-            activeVillagerCount = VillagerManager.Instance.ActiveVillagers.Count;
+            foreach (var v in VillagerManager.Instance.ActiveVillagers)
+            {
+                if (v != null && v.isLocal) activeVillagerCount++;
+            }
         }
         pop = Mathf.Max(1, activeVillagerCount);
 
@@ -1776,7 +1779,10 @@ public class Player_UI : MonoBehaviour
         int villagerCount = 0;
         if (VillagerManager.Instance != null && VillagerManager.Instance.ActiveVillagers != null)
         {
-            villagerCount = VillagerManager.Instance.ActiveVillagers.Count;
+            foreach (var v in VillagerManager.Instance.ActiveVillagers)
+            {
+                if (v != null && v.isLocal) villagerCount++;
+            }
         }
 
         if (resourceId == "weizen" && villagerCount > 0)
