@@ -188,6 +188,11 @@ public class Soldier : MonoBehaviour
         if (netId == 0)
         {
             netId = NetCombat.NextId(ownerActorNumber);
+            // WICHTIG: Nachtraeglich registrieren! OnEnable lief bereits, als
+            // netId noch 0 war (dort wurde das Register-Update uebersprungen).
+            // Ohne diesen Aufruf fehlt der Soldat in NetCombat.SoldiersById
+            // und kann nie auf ein Schiff geladen werden.
+            NetCombat.RegisterSoldier(this);
         }
 
         isSimulated = !PrepareVisualsOnly && IsOwnedByLocalPlayer;
@@ -261,6 +266,18 @@ public class Soldier : MonoBehaviour
         {
             SelectionManager.Instance.NotifySoldierDestroyed(this);
         }
+
+        // Soldaten-Zaehler korrigieren: Tote Soldaten geben ihren Limit-Platz wieder
+        // frei. Ohne dieses Dekrement zaehlte "soldaten" ewig weiter und die Kasernen
+        // blieben stillschweigend am (unsichtbaren) Limit haengen.
+        // NUR auf dem Authority-Client und nur fuer eigene Spieler-Soldaten:
+        // auf Fremd-Clients ist die Kopie nur ein Proxy (der Besitzer dekrementiert).
+        if (Player_UI.Instance != null && IsAuthority && team == Team.Player &&
+            ownerActorNumber != 0)
+        {
+            Player_UI.Instance.AddResource("soldaten", -1);
+        }
+
         Destroy(gameObject);
     }
 

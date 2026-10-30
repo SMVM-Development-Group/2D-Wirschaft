@@ -855,17 +855,23 @@ public class Ship : MonoBehaviour
 
     private Soldier FindNearestSoldier(SoldierType type)
     {
-        // Soldaten-Registrierung statt FindObjectsByType
+        // Robust: Direkt ueber ActiveSoldiers iterieren (in OnEnable/OnDisable
+        // gepflegt) statt ueber NetCombat.SoldiersById. Das Register hat bei
+        // Soldaten gefehlt, deren netId erst in Start() zugewiesen wurde
+        // (OnEnable registriert bei netId==0 nicht) - danach liess sich der
+        // Soldat nicht aufs Schiff laden ("Kein Soldat in der Naehe").
+        // Owner-Pruefung via IsOwnedByLocalPlayer (ownerActorNumber) ist
+        // resilienter als OwnerFromId/ID-Division bei veralteten IDs.
         Soldier best = null;
         float bestDist = float.MaxValue;
 
-        int actor = PhotonNetwork.InRoom ? PhotonNetwork.LocalPlayer.ActorNumber : 1;
-        foreach (var pair in NetCombat.SoldiersById)
+        var soldiers = Soldier.ActiveSoldiers;
+        for (int i = 0; i < soldiers.Count; i++)
         {
-            Soldier s = pair.Value;
+            Soldier s = soldiers[i];
             if (s == null || !s.gameObject.activeInHierarchy) continue;
             if (s.soldierType != type) continue;
-            if (NetCombat.OwnerFromId(pair.Key) != actor) continue;
+            if (!s.IsOwnedByLocalPlayer) continue;
             if (IsSoldierAlreadyLoaded(s)) continue;
 
             float d = Vector3.Distance(transform.position, s.transform.position);
@@ -1087,7 +1093,51 @@ public class Ship : MonoBehaviour
                 NetCombat.Raise(NetCombat.ShipDestroyEvent, new object[] { shipNetId }, true);
             }
         }
+
+        // Geladene Soldaten/Bauarbeiter nicht fuer immer deaktiviert lassen:
+        // beim Sinken am naechsten Land wieder freigeben.
+        if (!isQuitting)
+        {
+            SalvageLoadedUnits();
+        }
+
         ReleaseCrew();
+    }
+
+    /// <summary>
+    /// Beim Zerstoeren des Schiffs geladene Einheiten am naechsten Land wieder aktivieren.
+    /// Material geht mit dem Schiff unter. Auf fremden Clients sind Slots leer -> No-Op.
+    /// </summary>
+    private void SalvageLoadedUnits()
+    {
+        Vector2 landPos = FindNearestLandCell(transform.position);
+        int actor = PhotonNetwork.InRoom ? PhotonNetwork.LocalPlayer.ActorNumber : 1;
+
+        foreach (var slot in slots)
+        {
+            if (slot.content == ShipSlot.SlotContent.Soldier)
+            {
+                if (slot.loadedSoldierRef != null)
+                {
+                    slot.loadedSoldierRef.transform.position = landPos;
+                    slot.loadedSoldierRef.transform.rotation = Quaternion.identity;
+                    slot.loadedSoldierRef.gameObject.SetActive(true);
+                }
+                else
+                {
+                    // Referenz verloren (z.B. Soldat ausserhalb des Clients erzeugt): Ersatz spawnen.
+                    NetCombat.SpawnSoldier(slot.soldierType, WeaponMaterial.Stone,
+                        new Vector3(landPos.x, landPos.y, 0f), actor, true);
+                }
+            }
+            else if (slot.content == ShipSlot.SlotContent.Builder && slot.villager != null)
+            {
+                slot.villager.transform.position = landPos;
+                slot.villager.gameObject.SetActive(true);
+                slot.villager.ReleaseFromShip();
+            }
+            slot.Clear();
+        }
     }
 
     private static bool isQuitting;

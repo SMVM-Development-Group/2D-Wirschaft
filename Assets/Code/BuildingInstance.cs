@@ -847,6 +847,20 @@ public class BuildingInstance : MonoBehaviour
     {
         if (!isLocal) return;
 
+        // Vorab Limit-Check: Sonst laufen Ressourcen und Warteschlange ins Leere
+        // und der Spieler bekommt weder Soldat noch Rueckmeldung.
+        if (Player_UI.Instance != null)
+        {
+            int cur = Player_UI.Instance.GetResource("soldaten");
+            int cap = Player_UI.Instance.GetMaxResource("soldaten");
+            if (cur >= cap)
+            {
+                NotificationManager.Instance?.Notify("barracks_limit",
+                    $"Soldaten-Limit erreicht ({cur}/{cap})! Baue Wohnhäuser, um mehr Soldaten auszubilden.", 6f);
+                return;
+            }
+        }
+
         if (CanAffordSoldier())
         {
             SpendSoldierResources();
@@ -979,7 +993,12 @@ public class BuildingInstance : MonoBehaviour
         }
         else
         {
+            // Sichtbare Rueckmeldung statt nur Debug.Log (war unsichtbar im Spiel!).
+            // Limit kann hier nur greifen, wenn es zwischen Bestellung und Fertigstellung sank
+            // (z.B. Wohnhaus zerstoert) - der Vorab-Check in OrderSoldier fängt den Normalfall ab.
             Debug.Log("Soldaten-Limit erreicht! Rekrutierung pausiert.");
+            NotificationManager.Instance?.Notify("barracks_limit",
+                $"Soldaten-Limit erreicht ({current}/{max})! Baue Wohnhäuser, um mehr Soldaten auszubilden.", 6f);
         }
     }
 

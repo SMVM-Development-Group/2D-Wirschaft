@@ -144,6 +144,7 @@ public class PlacementManager : MonoBehaviour
         List<ShipPlacementCandidate> candidates = GetShipCandidates(worldPos);
         if (candidates.Count == 0)
         {
+            NotifyShipPlacementProblem(worldPos);
             GetBasePlacementDimensions(currentBuilding, out int baseWidth, out int baseHeight);
             Vector2 fallbackCenter = SnapCenter(worldPos, baseWidth, baseHeight);
             return new PlacementPreview
@@ -1083,11 +1084,11 @@ private List<ShipPlacementCandidate> GetShipCandidates(Vector3 worldPos)
 
     private bool IsExactPierSegmentStart(Vector2Int start, Vector2Int along, int shipLength)
     {
-        if (BuildingManager.IsStegAt(start - along))
-        {
-            return false;
-        }
-
+        // Gerade Steg-Strecke von MINDESTENS shipLength Zellen erlauben.
+        // Vorher musste die Strecke EXAKT so lang sein wie das Schiff (kein Steg
+        // davor, kein Steg dahinter) - dadurch liess sich auf einem 3er-Steg bei
+        // einem 2er-Schiff (oder 5er-Steg bei 4er-Schiff) ueberhaupt kein Schiff
+        // platzieren: Der Ghost drehte sich nicht und blieb rot.
         for (int i = 0; i < shipLength; i++)
         {
             if (!BuildingManager.IsStegAt(start + along * i))
@@ -1096,7 +1097,43 @@ private List<ShipPlacementCandidate> GetShipCandidates(Vector3 worldPos)
             }
         }
 
-        return !BuildingManager.IsStegAt(start + along * shipLength);
+        return true;
+    }
+
+    /// <summary>
+    /// Info-Meldung, warum aktuell kein Schiff-Kandidat erzeugt wird.
+    /// NotificationManager throttelt per Key, daher kann das pro Frame aufgerufen werden.
+    /// </summary>
+    private void NotifyShipPlacementProblem(Vector3 worldPos)
+    {
+        GetBasePlacementDimensions(currentBuilding, out int baseWidth, out int baseHeight);
+        int shipLength = Mathf.Max(baseWidth, baseHeight);
+
+        List<Vector2Int> pierCells = BuildingManager.GetStegPositions();
+        if (pierCells.Count == 0)
+        {
+            NotificationManager.Instance?.Notify("ship_no_pier_yet",
+                "Du brauchst zuerst einen Steg! (Baumenue: Steg)", 4f);
+            return;
+        }
+
+        Vector2Int mouseGrid = new Vector2Int(Mathf.RoundToInt(worldPos.x), Mathf.RoundToInt(worldPos.y));
+        int nearestDist = int.MaxValue;
+        foreach (Vector2Int pierCell in pierCells)
+        {
+            int d = Mathf.Max(Mathf.Abs(pierCell.x - mouseGrid.x), Mathf.Abs(pierCell.y - mouseGrid.y));
+            if (d < nearestDist) nearestDist = d;
+        }
+
+        if (nearestDist > shipLength + 3)
+        {
+            NotificationManager.Instance?.Notify("ship_far_from_pier",
+                "Geh näher an einen Steg heran, um das Schiff zu platzieren!", 4f);
+            return;
+        }
+
+        NotificationManager.Instance?.Notify("ship_pier_too_short",
+            $"Der Steg ist zu kurz/gekrümmt! Das Schiff braucht eine GERADE Stegstrecke von mindestens {shipLength} Zellen.", 4f);
     }
 
     private void TryAddShipCandidate(List<ShipPlacementCandidate> candidates, HashSet<string> seenKeys, Vector2Int segmentStart, Vector2Int along, Vector2Int outward, int shipLength, int shipWidth)
