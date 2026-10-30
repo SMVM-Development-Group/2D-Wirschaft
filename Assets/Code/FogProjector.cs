@@ -29,6 +29,8 @@ public class FogProjector : MonoBehaviour
     private GameObject exploredMeshObj;
     private const float ExploredRebuildInterval = 0.25f;
     private float exploredRebuildTimer = 0f;
+    private const float ExploredRefreshInterval = 10f; // RT-Inhaltsverlust (z.B. Alt-Tab) periodisch ausgleichen
+    private float exploredRefreshTimer = 0f;
     private const float MaskRenderInterval = 0.06f; // ~16 FPS reicht völlig für die Maske
     private float maskRenderTimer = 0f;
 
@@ -218,6 +220,15 @@ public class FogProjector : MonoBehaviour
             dirtyChunks.Clear();
 
             // Explored-Textur nach geändertem Mesh neu backen
+            exploredCamera.Render();
+        }
+
+        // Periodisches Nachrenderen: RenderTexture-Inhalte können nach Fokuswechsel
+        // im VRAM verloren gehen — dann würde aufgedecktes Terrain als Nebel erscheinen.
+        exploredRefreshTimer -= Time.deltaTime;
+        if (exploredRefreshTimer <= 0f)
+        {
+            exploredRefreshTimer = ExploredRefreshInterval;
             exploredCamera.Render();
         }
 

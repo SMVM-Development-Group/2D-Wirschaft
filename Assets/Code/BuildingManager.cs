@@ -26,8 +26,10 @@ public class BuildingManager : MonoBehaviour, IOnEventCallback
 
     public static bool IsWalkable(Vector2 pos)
     {
+        // Wasser (auch flaches Wasser) ist fuer Einheiten NICHT begehbar.
+        // Inseln sind nur ueber Stege verbunden — siehe IsStegAt.
         Vector2Int grid = new Vector2Int(Mathf.RoundToInt(pos.x), Mathf.RoundToInt(pos.y));
-        return IslandManager.IsLand(grid) || IslandManager.IsShallowWater(grid) || IsStegAt(grid);
+        return IslandManager.IsLand(grid) || IsStegAt(grid);
     }
 
     public static bool CanPlacePierAt(Vector2Int grid)
@@ -269,7 +271,8 @@ public class BuildingManager : MonoBehaviour, IOnEventCallback
                 Vector2Int next = current + dir;
                 if (!IsWalkable(next)) continue;
 
-                float stepCost = IslandManager.IsShallowWater(next) ? 3f : 1f;
+                // Stege und Land sind gleich schnell; Wasser ist gar nicht begehbar.
+                float stepCost = 1f;
                 float newCost = costSoFar[current] + stepCost;
                 if (costSoFar.TryGetValue(next, out float existingCost) && newCost >= existingCost)
                 {

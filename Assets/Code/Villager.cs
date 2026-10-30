@@ -133,17 +133,34 @@ public class Villager : MonoBehaviour
             {
                 Vector2 waypoint = currentPath[currentPathIndex];
                 Vector2 next = Vector2.MoveTowards(transform.position, waypoint, moveSpeed * speedMod * Time.deltaTime);
-                transform.position = new Vector3(next.x, next.y, transform.position.z);
 
-                if (Vector2.Distance(transform.position, waypoint) < 0.1f)
+                // Wasser ist unpassbar — falls der Weg blockiert wurde (z.B. Steg abgebrochen),
+                // anhalten und neu routeen statt im Wasser stehen zu bleiben.
+                if (!BuildingManager.IsWalkable(next))
                 {
-                    currentPathIndex++;
+                    SetPathTo(targetPosition);
+                }
+                else
+                {
+                    transform.position = new Vector3(next.x, next.y, transform.position.z);
+
+                    if (Vector2.Distance(transform.position, waypoint) < 0.1f)
+                    {
+                        currentPathIndex++;
+                    }
                 }
             }
             else
             {
                 Vector2 next = Vector2.MoveTowards(transform.position, targetPosition, moveSpeed * speedMod * Time.deltaTime);
-                transform.position = new Vector3(next.x, next.y, transform.position.z);
+                if (!BuildingManager.IsWalkable(next))
+                {
+                    SetPathTo(targetPosition);
+                }
+                else
+                {
+                    transform.position = new Vector3(next.x, next.y, transform.position.z);
+                }
             }
 
             if (currentPath.Count == 0 || currentPathIndex >= currentPath.Count)

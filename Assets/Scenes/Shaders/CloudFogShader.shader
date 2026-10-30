@@ -66,9 +66,13 @@ Shader "Custom/CloudFogShader"
                 float unexploredAlpha = lerp(0.98, 1.0, density); // Opaque base
                 fixed4 unexploredCol = fixed4(_CloudColor.rgb * (0.85 + 0.15 * density), unexploredAlpha);
                 
-                // Explored-but-invisible shroud is semi-transparent so the player can see the terrain, but with cloud textures.
-                float shroudAlpha = _ShroudColor.a * lerp(0.4, 1.0, density);
-                fixed4 shroudCol = fixed4(_ShroudColor.rgb * (0.8 + 0.2 * density), shroudAlpha);
+                // Explored-but-invisible shroud: einmal aufgedeckte Gebiete bleiben
+                // dauerhaft aufgedeckt — KEINE animierten Wolken mehr darueber (die
+                // rollende Wolkendecke sah aus wie frisch zurueckkommender Nebel).
+                // Nur ein leichter, statischer Dunstschleier, damit das Terrain klar
+                // erkennbar ist und sich sichtbar von unexplored unterscheidet.
+                float shroudAlpha = 0.22f;
+                fixed4 shroudCol = fixed4(0.85, 0.9, 0.95, shroudAlpha);
                 
                 // Smooth interpolation between unexplored clouds and explored shroud
                 fixed4 baseCloud = lerp(unexploredCol, shroudCol, saturate(explored));

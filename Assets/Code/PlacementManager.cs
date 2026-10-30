@@ -793,6 +793,7 @@ private List<ShipPlacementCandidate> GetShipCandidates(Vector3 worldPos)
         
         HashSet<Vector2Int> validStegPositions = new HashSet<Vector2Int>();
         Vector2Int[] checkDirs = { Vector2Int.up, Vector2Int.down, Vector2Int.left, Vector2Int.right };
+        HashSet<Vector2Int> stegSet = new HashSet<Vector2Int>(pierCells);
         
         foreach (Vector2Int stegPos in pierCells)
         {
@@ -813,6 +814,23 @@ private List<ShipPlacementCandidate> GetShipCandidates(Vector3 worldPos)
             }
         }
 
+        // BFS: Auch Stege weiter draussen in der Kette sind anlegbar, solange sie
+        // mit der Landseite (Lagerhaus-Insel) verbunden sind.
+        Queue<Vector2Int> chainQueue = new Queue<Vector2Int>();
+        foreach (Vector2Int valid in validStegPositions) chainQueue.Enqueue(valid);
+        while (chainQueue.Count > 0)
+        {
+            Vector2Int current = chainQueue.Dequeue();
+            foreach (var dir in checkDirs)
+            {
+                Vector2Int neighbor = current + dir;
+                if (validStegPositions.Contains(neighbor)) continue;
+                if (!stegSet.Contains(neighbor)) continue;
+                validStegPositions.Add(neighbor);
+                chainQueue.Enqueue(neighbor);
+            }
+        }
+
         foreach (Vector2Int pierCell in pierCells)
         {
             // Nur gültige Stege verwenden
@@ -828,7 +846,9 @@ private List<ShipPlacementCandidate> GetShipCandidates(Vector3 worldPos)
 
             foreach (Vector2Int along in alongDirections)
             {
-                if (!IsExactPierSegmentStart(pierCell, along, shipLength))
+                // Gerade, durchgehende Steg-Strecke von shipLength Zellen genügt
+                // (statt wie bisher: exakt die letzte Segment-Grenze des Stegs).
+                if (!IsStraightStegRun(pierCell, along, shipLength))
                 {
                     continue;
                 }
@@ -1081,14 +1101,12 @@ private List<ShipPlacementCandidate> GetShipCandidates(Vector3 worldPos)
         }
     }
 
-    private bool IsExactPierSegmentStart(Vector2Int start, Vector2Int along, int shipLength)
+    private bool IsStraightStegRun(Vector2Int start, Vector2Int along, int shipLength)
     {
-        if (BuildingManager.IsStegAt(start - along))
-        {
-            return false;
-        }
-
-        for (int i = 0; i < shipLength; i++)
+        // Genuegt eine durchgehende Steg-Strecke der Schiffslaenge (Algorithmus ist
+        // bewusst permissiver als frueher: davor/danach darf weiterer Steg folgen,
+        // sonst konnte man an laengeren Stegen nie anlegen).
+        for (int i = 0; i < shipLength && i < 16; i++)
         {
             if (!BuildingManager.IsStegAt(start + along * i))
             {
@@ -1096,7 +1114,7 @@ private List<ShipPlacementCandidate> GetShipCandidates(Vector3 worldPos)
             }
         }
 
-        return !BuildingManager.IsStegAt(start + along * shipLength);
+        return true;
     }
 
     private void TryAddShipCandidate(List<ShipPlacementCandidate> candidates, HashSet<string> seenKeys, Vector2Int segmentStart, Vector2Int along, Vector2Int outward, int shipLength, int shipWidth)

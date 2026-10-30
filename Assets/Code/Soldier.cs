@@ -36,6 +36,7 @@ public class Soldier : MonoBehaviour
     private const float ArriveDistance = 0.08f;
     private const float AggroPadding = 4f;
     private const float TargetRescanInterval = 0.3f;
+    private const float ChasePathRetryInterval = 0.5f;
 
     public static readonly List<Soldier> ActiveSoldiers = new List<Soldier>();
 
@@ -110,6 +111,7 @@ public class Soldier : MonoBehaviour
 
     // ── Suchtimer (Performance) ───────────────────────────────────────────
     private float targetRescanTimer;
+    private float chasePathRetryTimer;
     private Soldier cachedEnemyTarget;
     private BuildingInstance cachedEnemyBuilding;
 
@@ -308,6 +310,7 @@ public class Soldier : MonoBehaviour
 
         // Ziele alle 0.3s neu scannen statt JEDEM Frame (Performance!)
         targetRescanTimer -= Time.deltaTime;
+        if (chasePathRetryTimer > 0f) chasePathRetryTimer -= Time.deltaTime;
         if (targetRescanTimer <= 0f)
         {
             targetRescanTimer = TargetRescanInterval;
@@ -334,7 +337,11 @@ public class Soldier : MonoBehaviour
             }
             if (distance <= attackRange + AggroPadding)
             {
-                MoveTowards(attackBuildingTarget.transform.position);
+                if (!MoveTowards(attackBuildingTarget.transform.position))
+                {
+                    // Direktlinie blockiert (Wasser/Steg-Ecken): Pfad ueber Stege suchen
+                    RequestChasePath(attackBuildingTarget.transform.position);
+                }
                 return;
             }
         }
@@ -360,7 +367,11 @@ public class Soldier : MonoBehaviour
 
             if (distance <= attackRange + AggroPadding)
             {
-                MoveTowards(attackTarget.transform.position);
+                if (!MoveTowards(attackTarget.transform.position))
+                {
+                    // Direktlinie blockiert (Wasser/Steg-Ecken): Pfad ueber Stege suchen
+                    RequestChasePath(attackTarget.transform.position);
+                }
                 return;
             }
         }
@@ -854,8 +865,19 @@ public class Soldier : MonoBehaviour
     {
         Vector2 next = Vector2.MoveTowards(transform.position, targetPos, moveSpeed * Time.deltaTime);
         Vector2Int nextGrid = new Vector2Int(Mathf.RoundToInt(next.x), Mathf.RoundToInt(next.y));
-        if (!BuildingManager.IsWalkable(nextGrid)) return;
+        if (!BuildingManager.IsWalkable(nextGrid)) return false;
         transform.position = new Vector3(next.x, next.y, transform.position.z);
+        return true;
+    }
+
+    // Ruft SetPathTo nur gedrosselt auf, damit die Verfolgung beim blockierten Direktweg
+    // ueber die Steg-Kette neu geroutet wird und Soldaten zuegig Stege benutzen.
+    private void RequestChasePath(Vector2 targetPos)
+    {
+        if (chasePathRetryTimer > 0f) return;
+        chasePathRetryTimer = ChasePathRetryInterval;
+        hasMoveOrder = false;
+        SetPathTo(targetPos);
     }
 
     private void Attack(Soldier enemySoldier)
