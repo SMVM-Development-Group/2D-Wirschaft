@@ -242,12 +242,12 @@ public class BuildingInfoPanel : MonoBehaviour
             var autoTxt = btnAutoRecruit.GetComponentInChildren<TextMeshProUGUI>();
             if (currentBuilding.autoRecruit)
             {
-                autoTxt.text = "🤖 Autorekrutierung (20%): AN";
+                autoTxt.text = " Autorekrutierung (20%): AN";
                 btnAutoRecruit.GetComponent<Image>().color = GameUITheme.StatusGood;
             }
             else
             {
-                autoTxt.text = "🤖 Autorekrutierung (20%): AUS";
+                autoTxt.text = " Autorekrutierung (20%): AUS";
                 btnAutoRecruit.GetComponent<Image>().color = btnWarning;
             }
 
@@ -346,18 +346,18 @@ public class BuildingInfoPanel : MonoBehaviour
                 
                 if (currentBuilding.currentSchedule == BuildingInstance.ScheduleMode.Continuous)
                 {
-                    txtSchedule.text = $"<b>Arbeitsplan:</b> Nachtarbeit (24/7)\n<color={GameUITheme.HtmlBad}>⚠️ Starker Stress & Erschöpfungsrisiko!</color>";
-                    txtScheduleBtnLabel.text = "📅 Plan: 24/7";
+                    txtSchedule.text = $"<b>Arbeitsplan:</b> Nachtarbeit (24/7)\n<color={GameUITheme.HtmlBad}> Starker Stress & Erschöpfungsrisiko!</color>";
+                    txtScheduleBtnLabel.text = " Plan: 24/7";
                 }
                 else if (currentBuilding.currentSchedule == BuildingInstance.ScheduleMode.DayOnly)
                 {
-                    txtSchedule.text = $"<b>Arbeitsplan:</b> Regulär (Tag)\n<color={GameUITheme.HtmlWarning}>⚠ Milder Arbeitsstress (Normal)</color>";
-                    txtScheduleBtnLabel.text = "📅 Plan: Regulär (Tag)";
+                    txtSchedule.text = $"<b>Arbeitsplan:</b> Regulär (Tag)\n<color={GameUITheme.HtmlWarning}> Milder Arbeitsstress (Normal)</color>";
+                    txtScheduleBtnLabel.text = " Plan: Regulär (Tag)";
                 }
                 else
                 {
                     txtSchedule.text = $"<b>Arbeitsplan:</b> Freizeit-Plan\n<color={GameUITheme.HtmlGood}>✔ +Zufriedenheit (Mittagspause & Freizeit)</color>";
-                    txtScheduleBtnLabel.text = "📅 Plan: Freizeit";
+                    txtScheduleBtnLabel.text = " Plan: Freizeit";
                 }
             }
             else
@@ -372,12 +372,12 @@ public class BuildingInfoPanel : MonoBehaviour
                 btnToggleHutType.gameObject.SetActive(currentBuilding.IsConstructed());
                 if (currentBuilding.isBuilderHut)
                 {
-                    txtHutTypeBtnLabel.text = "🏗️ Typ: Bauarbeiter-Hütte (Kosten: 1 Weizen)";
+                    txtHutTypeBtnLabel.text = " Typ: Bauarbeiter-Hütte (Kosten: 1 Weizen)";
                     btnToggleHutType.GetComponent<Image>().color = GameUITheme.ButtonWarning; // orange/gold theme
                 }
                 else
                 {
-                    txtHutTypeBtnLabel.text = "🏠 Typ: Wohnhaus (Kosten: 1 Weizen)";
+                    txtHutTypeBtnLabel.text = " Typ: Wohnhaus (Kosten: 1 Weizen)";
                     btnToggleHutType.GetComponent<Image>().color = btnNeutral; // standard green/neutral
                 }
             }
@@ -443,12 +443,12 @@ public class BuildingInfoPanel : MonoBehaviour
             btnToggleHutType.gameObject.SetActive(currentBuilding.IsConstructed());
             if (currentBuilding.isBuilderHut)
             {
-                txtHutTypeBtnLabel.text = "🏗️ Typ: Bauarbeiter-Hütte (Kosten: 1 Weizen)";
+                txtHutTypeBtnLabel.text = " Typ: Bauarbeiter-Hütte (Kosten: 1 Weizen)";
                 btnToggleHutType.GetComponent<Image>().color = GameUITheme.ButtonWarning;
             }
             else
             {
-                txtHutTypeBtnLabel.text = "🏠 Typ: Wohnhaus (Kosten: 1 Weizen)";
+                txtHutTypeBtnLabel.text = " Typ: Wohnhaus (Kosten: 1 Weizen)";
                 btnToggleHutType.GetComponent<Image>().color = btnNeutral;
             }
         }
@@ -583,13 +583,13 @@ public class BuildingInfoPanel : MonoBehaviour
         MakeDivider(inner.transform);
         txtSchedule = MakeStatRow(inner.transform, "");
 
-        btnToggleSchedule = MakeButton("ToggleScheduleBtn", inner.transform, "📅 Plan ändern", btnNeutral, 350f, 40f, 14f);
+        btnToggleSchedule = MakeButton("ToggleScheduleBtn", inner.transform, " Plan ändern", btnNeutral, 350f, 40f, 14f);
         txtScheduleBtnLabel = btnToggleSchedule.GetComponentInChildren<TextMeshProUGUI>();
         btnToggleSchedule.onClick.AddListener(OnToggleScheduleClicked);
         AddLE(btnToggleSchedule.gameObject, minW: 350f, minH: 40f);
 
         // Hut type toggle button for houses
-        btnToggleHutType = MakeButton("ToggleHutTypeBtn", inner.transform, "🏠 Typ: Wohnhaus", btnNeutral, 350f, 40f, 14f);
+        btnToggleHutType = MakeButton("ToggleHutTypeBtn", inner.transform, " Typ: Wohnhaus", btnNeutral, 350f, 40f, 14f);
         txtHutTypeBtnLabel = btnToggleHutType.GetComponentInChildren<TextMeshProUGUI>();
         btnToggleHutType.onClick.AddListener(OnToggleHutTypeClicked);
         AddLE(btnToggleHutType.gameObject, minW: 350f, minH: 40f);
@@ -612,7 +612,7 @@ public class BuildingInfoPanel : MonoBehaviour
         btnPause.onClick.AddListener(OnPauseClicked);
         AddLE(btnPause.gameObject, minW: 170f, minH: 48f);
 
-        btnDemolish = MakeButton("DemolishBtn", btnRow.transform, "🔨 Abreißen", btnDanger, 170f, 48f, 15f);
+        btnDemolish = MakeButton("DemolishBtn", btnRow.transform, " Abreißen", btnDanger, 170f, 48f, 15f);
         btnDemolish.onClick.AddListener(OnDemolishClicked);
         AddLE(btnDemolish.gameObject, minW: 170f, minH: 48f);
     }
@@ -690,7 +690,7 @@ public class BuildingInfoPanel : MonoBehaviour
             GameObject textGO = new GameObject("HutTypeErrorText");
             textGO.transform.position = currentBuilding.transform.position + Vector3.up * 1.2f;
             var textMesh = textGO.AddComponent<TextMesh>();
-            textMesh.text = "⚠️ Weizen fehlt!";
+            textMesh.text = " Weizen fehlt!";
             textMesh.fontSize = 22;
             textMesh.characterSize = 0.07f;
             textMesh.color = GameUITheme.StatusBad;
@@ -817,14 +817,14 @@ public class BuildingInfoPanel : MonoBehaviour
         MakeDivider(barracksContainer.transform);
 
         var txtTypesTitle = MakeTMP("TypesTitle", barracksContainer.transform,
-            "<b>⚔ Ausbildungstypen:</b>", 13f, FontStyles.Normal, labelColor);
+            "<b> Ausbildungstypen:</b>", 13f, FontStyles.Normal, labelColor);
         AddLE(txtTypesTitle.gameObject, minH: 20f);
 
         var typesRow = MakeBarracksRow("TypesRow", barracksContainer.transform);
-        btnToggleSpear  = MakeBarracksBtn("SpearToggle",  typesRow.transform, "🏹 Speer",   btnNeutral);
-        btnToggleShield = MakeBarracksBtn("ShieldToggle", typesRow.transform, "🛡 Schild",  btnNeutral);
-        btnToggleSword  = MakeBarracksBtn("SwordToggle",  typesRow.transform, "⚔ Schwert", btnNeutral);
-        btnToggleBow    = MakeBarracksBtn("BowToggle",    typesRow.transform, "🏹 Bogen",   btnNeutral);
+        btnToggleSpear  = MakeBarracksBtn("SpearToggle",  typesRow.transform, " Speer",   btnNeutral);
+        btnToggleShield = MakeBarracksBtn("ShieldToggle", typesRow.transform, " Schild",  btnNeutral);
+        btnToggleSword  = MakeBarracksBtn("SwordToggle",  typesRow.transform, " Schwert", btnNeutral);
+        btnToggleBow    = MakeBarracksBtn("BowToggle",    typesRow.transform, " Bogen",   btnNeutral);
 
         btnToggleSpear .onClick.AddListener(() => { if (currentBuilding != null) { currentBuilding.spearSelected  = !currentBuilding.spearSelected;  RefreshStats(); } });
         btnToggleShield.onClick.AddListener(() => { if (currentBuilding != null) { currentBuilding.shieldSelected = !currentBuilding.shieldSelected; RefreshStats(); } });
@@ -835,14 +835,14 @@ public class BuildingInfoPanel : MonoBehaviour
         MakeDivider(barracksContainer.transform);
 
         var txtMaterialTitle = MakeTMP("MaterialTitle", barracksContainer.transform,
-            "<b>🪨 Ausrüstungs-Qualität:</b>", 13f, FontStyles.Normal, labelColor);
+            "<b> Ausrüstungs-Qualität:</b>", 13f, FontStyles.Normal, labelColor);
         AddLE(txtMaterialTitle.gameObject, minH: 20f);
 
         var resRow  = MakeBarracksRow("ResRow", barracksContainer.transform);
-        btnResWood  = MakeBarracksBtn("ResWood",  resRow.transform, "🪵 Holz",  btnNeutral);
-        btnResStone = MakeBarracksBtn("ResStone", resRow.transform, "🪨 Stein", btnNeutral);
-        btnResGold  = MakeBarracksBtn("ResGold",  resRow.transform, "🥇 Gold",  btnNeutral);
-        btnResIron  = MakeBarracksBtn("ResIron",  resRow.transform, "⛏ Eisen", btnNeutral);
+        btnResWood  = MakeBarracksBtn("ResWood",  resRow.transform, " Holz",  btnNeutral);
+        btnResStone = MakeBarracksBtn("ResStone", resRow.transform, " Stein", btnNeutral);
+        btnResGold  = MakeBarracksBtn("ResGold",  resRow.transform, " Gold",  btnNeutral);
+        btnResIron  = MakeBarracksBtn("ResIron",  resRow.transform, " Eisen", btnNeutral);
 
         btnResWood .onClick.AddListener(() => { if (currentBuilding != null) { currentBuilding.selectedResource = BuildingInstance.BarracksResource.Wood;  RefreshStats(); } });
         btnResStone.onClick.AddListener(() => { if (currentBuilding != null) { currentBuilding.selectedResource = BuildingInstance.BarracksResource.Stone; RefreshStats(); } });
@@ -853,7 +853,7 @@ public class BuildingInfoPanel : MonoBehaviour
         MakeDivider(barracksContainer.transform);
 
         var txtAutoTitle = MakeTMP("AutoTitle", barracksContainer.transform,
-            "<b>🤖 Automatisierung:</b>", 13f, FontStyles.Normal, labelColor);
+            "<b> Automatisierung:</b>", 13f, FontStyles.Normal, labelColor);
         AddLE(txtAutoTitle.gameObject, minH: 20f);
 
         btnAutoRecruit = MakeButton("AutoRecruitBtn", barracksContainer.transform,
@@ -865,7 +865,7 @@ public class BuildingInfoPanel : MonoBehaviour
         MakeDivider(barracksContainer.transform);
 
         var txtOrderTitle = MakeTMP("OrderTitle", barracksContainer.transform,
-            "<b>📋 Auftrag erteilen:</b>", 13f, FontStyles.Normal, labelColor);
+            "<b> Auftrag erteilen:</b>", 13f, FontStyles.Normal, labelColor);
         AddLE(txtOrderTitle.gameObject, minH: 20f);
 
         var orderRow  = MakeBarracksRow("OrderRow", barracksContainer.transform);

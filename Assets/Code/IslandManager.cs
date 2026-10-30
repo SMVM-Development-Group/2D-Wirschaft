@@ -416,9 +416,12 @@ public class IslandManager : MonoBehaviour
         int textureIndex = 0;
         if (texNames.Count > 1)
         {
-            long textureHash = (long)startPos.x * 73856093L ^ (long)startPos.y * 19349663L;
-            // Vorzeichenbit maskieren statt Mathf.Abs: Abs(int.MinValue) würde eine OverflowException werfen.
-            textureIndex = (int)((textureHash & long.MaxValue) % texNames.Count);
+            // Unsigned-Modulo statt Mathf.Abs — Mathf.Abs(int.MinValue) wirft
+            // OverflowException ("Negating the minimum value of a twos complement number"),
+            // was bei weit entfernten Insel-Positionen durch int-Saturation passieren kann.
+            long hx = (long)(startPos.x * 73856093f);
+            long hy = (long)(startPos.y * 19349663f);
+            textureIndex = (int)(((ulong)hx ^ (ulong)hy) % (ulong)texNames.Count);
         }
         string selectedTexture = texNames[textureIndex];
 

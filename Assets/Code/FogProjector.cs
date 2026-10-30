@@ -117,7 +117,9 @@ public class FogProjector : MonoBehaviour
         maskTexture = new RenderTexture(maskResolution, maskResolution, 24);
         maskTexture.filterMode = FilterMode.Bilinear;
 
-        exploredTexture = new RenderTexture(maskResolution, maskResolution, 0, RenderTextureFormat.ARGB32);
+        // Depth-Bits nötig: Unity 6 RenderGraph verlangt für kamerabasiertes Rendering
+        // in eine Output-RT einen Depth-Buffer (statt None gibt es sonst nur eine Warning).
+        exploredTexture = new RenderTexture(maskResolution, maskResolution, 24, RenderTextureFormat.ARGB32);
         exploredTexture.filterMode = FilterMode.Bilinear;
         exploredTexture.Create();
         RenderTexture.active = exploredTexture;
