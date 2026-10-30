@@ -81,6 +81,9 @@ public class FogRevealer : MonoBehaviour
 
     private void OnEnable()
     {
+        // Fuer FogProjector.IsVisible() bekannt machen (lokale Revealer bestimmen die Sichtbarkeit)
+        FogProjector.AddRevealer(this);
+
         if (maskObj != null) maskObj.SetActive(true);
         if (isLocalPlayer)
         {
@@ -90,6 +93,13 @@ public class FogRevealer : MonoBehaviour
 
     private void OnDisable()
     {
+        FogProjector.RemoveRevealer(this);
+
         if (maskObj != null) maskObj.SetActive(false);
+    }
+
+    private void OnDestroy()
+    {
+        FogProjector.RemoveRevealer(this);
     }
 }

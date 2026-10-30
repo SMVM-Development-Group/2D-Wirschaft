@@ -34,9 +34,43 @@ public class FogProjector : MonoBehaviour
     private const float MaskRenderInterval = 0.06f; // ~16 FPS reicht völlig für die Maske
     private float maskRenderTimer = 0f;
 
+    // ── TEMPORÄRES DEBUG (F9 umschalten): zeigt Fog-Zustand an der Mausposition ──
+    private bool debugOverlay = false;
+    private GUIStyle debugStyle;
+
     public static bool IsExplored(Vector2 pos)
     {
         return exploredCells.Contains(new Vector2(Mathf.Round(pos.x), Mathf.Round(pos.y)));
+    }
+
+    /// <summary>
+    /// Wie tief liegt die Position im Sichtfeld? > 0 = sichtbar, Wert = Abstand
+    /// zum Rand des Sichtkreises (negativ = ausserhalb). Fuer Ghost-Aufraeumen:
+    /// Geister direkt AM Sichtrand sollen stehen bleiben.
+    /// </summary>
+    public static float VisibilityDepth(Vector2 pos)
+    {
+        float best = float.NegativeInfinity;
+        for (int i = revealers.Count - 1; i >= 0; i--)
+        {
+            FogRevealer r = revealers[i];
+            if (r == null || !r.isLocalPlayer) continue;
+            if (!r.enabled || !r.gameObject.activeInHierarchy) continue;
+            float rad = r.radius * 1.25f;
+            float depth = rad - Vector2.Distance(pos, r.transform.position);
+            if (depth > best) best = depth;
+        }
+        return best;
+    }
+
+    /// <summary>
+    /// Ist die Position JETZT direkt im Sichtfeld (im sichtbaren Kreis eines der
+    /// lokalen Revealer)? Genau wie die Masken-Optik (Revealer ohne isLocalPlayer
+    /// erzeugen keine Maske und zaehlen nicht).
+    /// </summary>
+    public static bool IsVisible(Vector2 pos)
+    {
+        return VisibilityDepth(pos) >= 0f;
     }
 
     public static void RegisterExploration(Vector2 center, float radius)
@@ -239,6 +273,38 @@ public class FogProjector : MonoBehaviour
             maskRenderTimer = MaskRenderInterval;
             maskCamera.Render();
         }
+    }
+
+    private void OnGUI()
+    {
+        // TEMPORÄRES DEBUG: F9 schaltet ein/aus. Zeigt Live-Zustand unter der Maus.
+        var keyboard = UnityEngine.InputSystem.Keyboard.current;
+        if (keyboard != null && keyboard.f9Key.wasPressedThisFrame)
+        {
+            debugOverlay = !debugOverlay;
+            Debug.Log($"[FogDebug] Overlay {(debugOverlay ? "AN" : "AUS")} | exploredCells={exploredCells.Count} | dirtyChunks={dirtyChunks.Count}");
+        }
+
+        if (!debugOverlay) return;
+
+        if (debugStyle == null)
+        {
+            debugStyle = new GUIStyle(GUI.skin.label);
+            debugStyle.fontSize = 16;
+        }
+
+        Vector3 mousePos = UnityEngine.InputSystem.Mouse.current != null
+            ? (Vector3)UnityEngine.InputSystem.Mouse.current.position.value
+            : Vector3.zero;
+        Vector3 mp = Camera.main ? Camera.main.ScreenToWorldPoint(mousePos) : Vector3.zero;
+        Vector2 wp = new Vector2(mp.x, mp.y);
+        bool exp = IsExplored(wp);
+        bool vis = IsVisible(wp);
+
+        GUI.Label(new Rect(10, 10, 560, 32), $"[FOG] exp={exploredCells.Count} dirty={dirtyChunks.Count}  |  F9 = aus", debugStyle);
+        GUI.Label(new Rect(10, 44, 560, 32),
+            $"Maus({wp.x:F1},{wp.y:F1})   explored: {(exp ? "JA" : "NEIN")}   sichtbar jetzt: {(vis ? "JA" : "NEIN")}",
+            debugStyle);
     }
 
     private void RebuildDirtyChunks()

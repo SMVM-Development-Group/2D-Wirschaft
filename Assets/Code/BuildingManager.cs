@@ -595,6 +595,10 @@ public class BuildingManager : MonoBehaviour, IOnEventCallback
         if (data.fogRevealRadius > 0f) revealer.radius = data.fogRevealRadius;
         if (data.placementRule == PlacementRule.Ship) revealer.radius = Mathf.Max(revealer.radius, 12f);
 
+        // Fog-Gedaechtnis: bleibt als ausgegrauter Snapshot stehen, wenn kein
+        // Sichtfeld mehr drauf ist (Gebäude dort werden nicht mehr mitgeupdated).
+        FogMemory.Add(building);
+
         // Apply red tint to enemy buildings
         if (!isLocal)
         {
@@ -623,6 +627,8 @@ public class BuildingManager : MonoBehaviour, IOnEventCallback
         FogRevealer revealer = warehouse.AddComponent<FogRevealer>();
         revealer.radius = 10f;
         revealer.isLocalPlayer = isLocal;
+
+        FogMemory.Add(warehouse);
 
         Renderer rend = warehouse.GetComponent<Renderer>();
 

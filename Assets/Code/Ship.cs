@@ -82,6 +82,10 @@ public class Ship : MonoBehaviour
         currentAngle = transform.rotation.eulerAngles.z;
         lastFogCell = new Vector2Int(Mathf.RoundToInt(transform.position.x), Mathf.RoundToInt(transform.position.y));
         hasFogCell = true;
+
+        // Fog-Gedaechtnis: Schiffe bleiben als ausgegrauter Snapshot stehen, wenn
+        // sie das Sichtfeld verlassen (bewegt sich nicht mehr mit).
+        FogMemory.Add(gameObject);
     }
 
     private void OnEnable()

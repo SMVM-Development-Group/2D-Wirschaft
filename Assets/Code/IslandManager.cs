@@ -10,7 +10,7 @@ public class IslandManager : MonoBehaviour
     public static IslandManager Instance;
     private static Dictionary<Vector2, ResourceType> resourceNodes = new Dictionary<Vector2, ResourceType>();
 
-    // Track node SpriteRenderers so we can hide them in fog
+    // Track node SpriteRenderers so depletion cleanup can destroy them (fog handled by FogMemory)
     private List<(Vector2 pos, SpriteRenderer sr)> resourceNodeRenderers = new List<(Vector2, SpriteRenderer)>();
 
     public static ResourceType GetResourceType(Vector2 pos)
@@ -171,33 +171,6 @@ public class IslandManager : MonoBehaviour
     {
         GenerateIslands();
     }
-
-    private void Update()
-    {
-        // Hide resource nodes that are still covered by fog.
-        // Throttle: nur wenn sich die Exploration geändert hat und max. alle 0.5s.
-        // (Vorher: alle N Nodes pro Frame = ständiger CPU-Fraß auf großen Maps.)
-        if (resourceNodeRenderers.Count == 0) return;
-
-        fogPollTimer -= Time.deltaTime;
-        if (fogPollTimer <= 0f)
-        {
-            fogPollTimer = 0.5f;
-            int currentVersion = FogProjector.ExplorationVersion;
-            if (currentVersion != lastFogVersion)
-            {
-                lastFogVersion = currentVersion;
-                foreach (var entry in resourceNodeRenderers)
-                {
-                    if (entry.sr == null) continue;
-                    entry.sr.enabled = FogProjector.IsExplored(entry.pos);
-                }
-            }
-        }
-    }
-
-    private float fogPollTimer = 0f;
-    private int lastFogVersion = -1;
 
     public bool IsGenerated { get; private set; } = false;
 
@@ -653,11 +626,14 @@ public class IslandManager : MonoBehaviour
             sr.color = GetColorForResource(type);
         }
 
-        // Start hidden – Update() will reveal when explored
+        // Start hidden – FogMemory on the node handles visibility:
+        // unexplored = hidden, explored-but-out-of-sight = grayed-out last-seen snapshot.
         sr.enabled = false;
 
-        // Track for fog toggling
+        // Track for depletion cleanup (nodes get destroyed when harvested)
         resourceNodeRenderers.Add((pos, sr));
+
+        FogMemory.Add(node);
     }
 
     private Color GetColorForResource(ResourceType type)
