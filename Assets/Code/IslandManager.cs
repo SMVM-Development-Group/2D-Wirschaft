@@ -416,7 +416,9 @@ public class IslandManager : MonoBehaviour
         int textureIndex = 0;
         if (texNames.Count > 1)
         {
-            textureIndex = Mathf.Abs((int)(startPos.x * 73856093) ^ (int)(startPos.y * 19349663)) % texNames.Count;
+            long textureHash = (long)startPos.x * 73856093L ^ (long)startPos.y * 19349663L;
+            // Vorzeichenbit maskieren statt Mathf.Abs: Abs(int.MinValue) würde eine OverflowException werfen.
+            textureIndex = (int)((textureHash & long.MaxValue) % texNames.Count);
         }
         string selectedTexture = texNames[textureIndex];
 
