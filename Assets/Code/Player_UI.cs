@@ -85,11 +85,11 @@ public class Player_UI : MonoBehaviour
     // ── Style  (Parchment / Karten-Look) ─────────────────────────────────────
 
     [Header("Style")]
-    [SerializeField] private Color barColor    = new Color(0.18f, 0.10f, 0.03f, 0.96f);   // dunkles Eichenbraun
-    [SerializeField] private Color slotColor   = new Color(0.42f, 0.27f, 0.09f, 0.92f);   // warmes Holzbraun
-    [SerializeField] private Color borderColor = new Color(0.72f, 0.52f, 0.18f, 1.00f);   // goldene Umrandung
-    [SerializeField] private Color labelColor  = new Color(0.90f, 0.78f, 0.52f, 0.85f);   // Pergament-Beige
-    [SerializeField] private Color valueColor  = new Color(1.00f, 0.95f, 0.75f, 1.00f);   // helles Cremegold
+    [SerializeField] private Color barColor    = GameUITheme.BarBackground;   // dunkles Eichenbraun
+    [SerializeField] private Color slotColor   = GameUITheme.SlotWood;        // warmes Holzbraun
+    [SerializeField] private Color borderColor = GameUITheme.AccentGold;      // goldene Umrandung
+    [SerializeField] private Color labelColor  = GameUITheme.LabelParchment;  // Pergament-Beige
+    [SerializeField] private Color valueColor  = GameUITheme.LabelPrimary;    // helles Cremegold
     [SerializeField] private float barHeight   = 58f;      // größer
     [SerializeField] private float slotPadding = 4f;
     [SerializeField] private float iconSize    = 34f;      // größere Icons
@@ -354,6 +354,23 @@ public class Player_UI : MonoBehaviour
 
     public void AddResource(string id, int delta) => SetResource(id, GetResource(id) + delta);
 
+    /// <summary>Test-Modus: alle bekannten Ressourcen auf einen Wert setzen.
+    /// Hebt das Lagerlimit (maxValue) mit an, damit wirklich der volle Cheat-Wert ankommt.</summary>
+    public void DebugFillResources(int amount)
+    {
+        List<string> ids = new List<string>(values.Keys);
+        foreach (string id in ids)
+        {
+            if (id == "stimmung" || id == "bevolkerung") continue; // procentuale Werte nicht fälschen
+            if (maxValues.ContainsKey(id))
+                maxValues[id] = Mathf.Max(maxValues[id], amount);
+            else
+                maxValues[id] = amount;
+            SetResource(id, amount);
+        }
+        Debug.Log($"[Player_UI] Test-Modus: Alle Ressourcen auf {amount} gesetzt.");
+    }
+
     public int GetResource(string id) => values.TryGetValue(id, out int v) ? v : 0;
     public int GetMaxResource(string id) => maxValues.TryGetValue(id, out int v) ? v : 0;
 
@@ -535,7 +552,7 @@ public class Player_UI : MonoBehaviour
         
         var subImg = subMenuContainer.GetComponent<Image>();
         // Etwas transparenter und edler
-        subImg.color = new Color(barColor.r, barColor.g, barColor.b, 0.85f); 
+        subImg.color = GameUITheme.PanelBackgroundSoft; 
 
         var subRT = subMenuContainer.GetComponent<RectTransform>();
         subRT.anchorMin = new Vector2(0.5f, 0f);
@@ -613,7 +630,7 @@ public class Player_UI : MonoBehaviour
         soldierCommandContainer.transform.SetParent(canvasTransform, false);
 
         Image panelImage = soldierCommandContainer.GetComponent<Image>();
-        panelImage.color = new Color(barColor.r, barColor.g, barColor.b, 0.92f);
+        panelImage.color = GameUITheme.PanelBackground;
 
         Outline panelOutline = soldierCommandContainer.AddComponent<Outline>();
         panelOutline.effectColor = borderColor;
@@ -726,7 +743,7 @@ public class Player_UI : MonoBehaviour
         if (img != null)
         {
             img.color = active
-                ? Color.Lerp(slotColor, new Color(0.35f, 0.75f, 1f, slotColor.a), 0.6f)
+                ? Color.Lerp(slotColor, GameUITheme.SelectionGold, 0.6f)
                 : slotColor;
         }
     }
@@ -982,7 +999,7 @@ public class Player_UI : MonoBehaviour
         panelRT.sizeDelta = Vector2.zero;
         
         var bgImage = statisticsPanel.GetComponent<Image>();
-        bgImage.color = new Color(0, 0, 0, 0.5f);
+        bgImage.color = GameUITheme.OverlayVeil;
 
         var btn = statisticsPanel.GetComponent<Button>();
         btn.onClick.AddListener(ToggleStatisticsScreen);
@@ -1051,7 +1068,7 @@ public class Player_UI : MonoBehaviour
         statisticsContentText.fontSize = 22f;
         statisticsContentText.color = valueColor;
         statisticsContentText.alignment = TextAlignmentOptions.TopLeft;
-        statisticsContentText.enableWordWrapping = true;
+        statisticsContentText.textWrappingMode = TextWrappingModes.Normal;
         
         var contentLE = contentGO.AddComponent<LayoutElement>();
         contentLE.flexibleHeight = 1f;
@@ -1127,9 +1144,10 @@ public class Player_UI : MonoBehaviour
         int totalBuildings = 0;
         int workingBuildings = 0;
         
-        var buildings = FindObjectsOfType<BuildingInstance>();
+        var buildings = BuildingInstance.AllBuildings; // Register statt FindObjectsOfType
         foreach (var b in buildings)
         {
+            if (b == null) continue;
             if (b.isLocal && b.IsConstructed())
             {
                 totalBuildings++;
@@ -1151,15 +1169,15 @@ public class Player_UI : MonoBehaviour
         if (VillagerManager.Instance != null) mood = VillagerManager.Instance.globalMood;
 
         string stats = $"<b>Bevölkerung & Militär</b>\n";
-        stats += $"<color=#CCCCCC>Einwohner:</color> {pop} / {maxPop}\n";
-        stats += $"<color=#CCCCCC>Freie Bürger:</color> {freeVillagers}\n";
-        stats += $"<color=#CCCCCC>Arbeitende Bürger:</color> {workers}\n";
-        stats += $"<color=#CCCCCC>Armee-Stärke:</color> {soldiers} / {maxSoldiers}\n";
-        stats += $"<color=#CCCCCC>Globale Zufriedenheit:</color> {mood:F0}%\n\n";
+        stats += $"<color={GameUITheme.HtmlNeutral}>Einwohner:</color> {pop} / {maxPop}\n";
+        stats += $"<color={GameUITheme.HtmlNeutral}>Freie Bürger:</color> {freeVillagers}\n";
+        stats += $"<color={GameUITheme.HtmlNeutral}>Arbeitende Bürger:</color> {workers}\n";
+        stats += $"<color={GameUITheme.HtmlNeutral}>Armee-Stärke:</color> {soldiers} / {maxSoldiers}\n";
+        stats += $"<color={GameUITheme.HtmlNeutral}>Globale Zufriedenheit:</color> {mood:F0}%\n\n";
 
         stats += $"<b>Infrastruktur</b>\n";
-        stats += $"<color=#CCCCCC>Eigene Gebäude:</color> {totalBuildings}\n";
-        stats += $"<color=#CCCCCC>Aktive Produktionsstätten:</color> {workingBuildings}\n";
+        stats += $"<color={GameUITheme.HtmlNeutral}>Eigene Gebäude:</color> {totalBuildings}\n";
+        stats += $"<color={GameUITheme.HtmlNeutral}>Aktive Produktionsstätten:</color> {workingBuildings}\n";
         
         statisticsContentText.text = stats;
 
@@ -1203,8 +1221,7 @@ public class Player_UI : MonoBehaviour
             var divGO = new GameObject("Div",
                 typeof(RectTransform), typeof(CanvasRenderer), typeof(Image));
             divGO.transform.SetParent(wrapper.transform, false);
-            divGO.GetComponent<Image>().color = new Color(
-                borderColor.r, borderColor.g, borderColor.b, 0.35f);
+            divGO.GetComponent<Image>().color = GameUITheme.OutlineGold;
             var divLE = divGO.AddComponent<LayoutElement>();
             divLE.minWidth  = 1f;
             divLE.minHeight = barHeight * 0.7f;
@@ -1299,8 +1316,11 @@ public class Player_UI : MonoBehaviour
 
     private void Update()
     {
-        if (tooltipPanel != null && tooltipPanel.activeSelf)
+        // Tooltip: max. 7×/s nachziehen (war: jeden Frame String-Neuaufbau)
+        tooltipUpdateTimer -= Time.deltaTime;
+        if (tooltipPanel != null && tooltipPanel.activeSelf && tooltipUpdateTimer <= 0f)
         {
+            tooltipUpdateTimer = 0.15f;
             UpdateTooltipContent();
         }
 
@@ -1311,6 +1331,8 @@ public class Player_UI : MonoBehaviour
             UpdateAllRates();
         }
     }
+
+    private float tooltipUpdateTimer = 0f;
 
     private void UpdateAllRates()
     {
@@ -1331,13 +1353,13 @@ public class Player_UI : MonoBehaviour
 
             if (Mathf.Abs(net) > 0.01f)
             {
-                string netColor = net >= 0 ? "#55FF55" : "#FF5555";
+                string netColor = net >= 0 ? GameUITheme.HtmlGood : GameUITheme.HtmlBad;
                 string prefix = net > 0 ? "+" : "";
                 currentRates[id] = $" <size=14><color={netColor}>{prefix}{net:F1}/Min</color></size>";
             }
             else
             {
-                currentRates[id] = " <size=14><color=#AAAAAA>0/Min</color></size>";
+                currentRates[id] = $" <size=14><color={GameUITheme.HtmlNeutral}>0/Min</color></size>";
             }
 
             // Label aktualisieren
@@ -1354,7 +1376,7 @@ public class Player_UI : MonoBehaviour
         tooltipPanel.transform.SetParent(canvasTransform, false);
 
         var img = tooltipPanel.GetComponent<Image>();
-        img.color = new Color(barColor.r, barColor.g, barColor.b, 0.98f);
+        img.color = GameUITheme.PanelBackground;
         img.raycastTarget = false;
 
         var outline = tooltipPanel.AddComponent<Outline>();
@@ -1362,7 +1384,7 @@ public class Player_UI : MonoBehaviour
         outline.effectDistance = new Vector2(borderWidth, -borderWidth);
 
         var shadow = tooltipPanel.AddComponent<Shadow>();
-        shadow.effectColor = new Color(0f, 0f, 0f, 0.6f);
+        shadow.effectColor = GameUITheme.ShadowOutline;
         shadow.effectDistance = new Vector2(4f, -4f);
 
         var rt = tooltipPanel.GetComponent<RectTransform>();
@@ -1394,7 +1416,7 @@ public class Player_UI : MonoBehaviour
         var divGO = new GameObject("Divider", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image));
         divGO.transform.SetParent(tooltipPanel.transform, false);
         var divImg = divGO.GetComponent<Image>();
-        divImg.color = new Color(borderColor.r, borderColor.g, borderColor.b, 0.4f);
+        divImg.color = GameUITheme.OutlineGold;
         divImg.raycastTarget = false;
         var divLE = divGO.AddComponent<LayoutElement>();
         divLE.minHeight = 1f;
@@ -1499,11 +1521,11 @@ public class Player_UI : MonoBehaviour
         if (isTickResource)
         {
             float net = production - consumption;
-            string netColor = net >= 0 ? "#55FF55" : "#FF5555";
+            string netColor = net >= 0 ? GameUITheme.HtmlGood : GameUITheme.HtmlBad;
             string netPrefix = net > 0 ? "+" : "";
             body += $"<b>Änderung:</b> <color={netColor}>{netPrefix}{net:F1}/Min</color>\n";
-            body += $"<b>Plus:</b> <color=#55FF55>+{production:F1}/Min</color>   ";
-            body += $"<b>Minus:</b> <color=#FF5555>-{consumption:F1}/Min</color>\n\n";
+            body += $"<b>Plus:</b> <color={GameUITheme.HtmlGood}>+{production:F1}/Min</color>   ";
+            body += $"<b>Minus:</b> <color={GameUITheme.HtmlBad}>-{consumption:F1}/Min</color>\n\n";
         }
 
         if (breakdown.Count > 0)
@@ -1709,7 +1731,7 @@ public class Player_UI : MonoBehaviour
             breakdown.Add("<b>Einnahmen / Produktion:</b>");
             foreach (var kvp in prodSources)
             {
-                breakdown.Add($"<color=#55FF55>+{kvp.Value:F1}/Min</color> durch {kvp.Key}");
+                breakdown.Add($"<color={GameUITheme.HtmlGood}>+{kvp.Value:F1}/Min</color> durch {kvp.Key}");
             }
         }
 
@@ -1719,7 +1741,7 @@ public class Player_UI : MonoBehaviour
             breakdown.Add("<b>Ausgaben / Verbrauch:</b>");
             foreach (var kvp in consSources)
             {
-                breakdown.Add($"<color=#FF5555>-{kvp.Value:F1}/Min</color> durch {kvp.Key}");
+                breakdown.Add($"<color={GameUITheme.HtmlBad}>-{kvp.Value:F1}/Min</color> durch {kvp.Key}");
             }
         }
     }
@@ -1815,7 +1837,7 @@ public class Player_UI : MonoBehaviour
             lines.Add("<b>Details:</b>");
             foreach (var entry in GetSortedDetailedSources(productionSources))
             {
-                lines.Add($"<color=#55FF55>+{entry.TotalRate:F1}/Min</color> durch {FormatDetailedSource(entry)}");
+                lines.Add($"<color={GameUITheme.HtmlGood}>+{entry.TotalRate:F1}/Min</color> durch {FormatDetailedSource(entry)}");
             }
         }
 
@@ -1827,7 +1849,7 @@ public class Player_UI : MonoBehaviour
             }
             foreach (var entry in GetSortedDetailedSources(consumptionSources))
             {
-                lines.Add($"<color=#FF5555>-{entry.TotalRate:F1}/Min</color> durch {FormatDetailedSource(entry)}");
+                lines.Add($"<color={GameUITheme.HtmlBad}>-{entry.TotalRate:F1}/Min</color> durch {FormatDetailedSource(entry)}");
             }
         }
 

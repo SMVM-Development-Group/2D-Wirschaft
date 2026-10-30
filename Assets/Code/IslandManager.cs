@@ -174,13 +174,30 @@ public class IslandManager : MonoBehaviour
 
     private void Update()
     {
-        // Hide resource nodes that are still covered by fog
-        foreach (var entry in resourceNodeRenderers)
+        // Hide resource nodes that are still covered by fog.
+        // Throttle: nur wenn sich die Exploration geändert hat und max. alle 0.5s.
+        // (Vorher: alle N Nodes pro Frame = ständiger CPU-Fraß auf großen Maps.)
+        if (resourceNodeRenderers.Count == 0) return;
+
+        fogPollTimer -= Time.deltaTime;
+        if (fogPollTimer <= 0f)
         {
-            if (entry.sr == null) continue;
-            entry.sr.enabled = FogProjector.IsExplored(entry.pos);
+            fogPollTimer = 0.5f;
+            int currentVersion = FogProjector.ExplorationVersion;
+            if (currentVersion != lastFogVersion)
+            {
+                lastFogVersion = currentVersion;
+                foreach (var entry in resourceNodeRenderers)
+                {
+                    if (entry.sr == null) continue;
+                    entry.sr.enabled = FogProjector.IsExplored(entry.pos);
+                }
+            }
         }
     }
+
+    private float fogPollTimer = 0f;
+    private int lastFogVersion = -1;
 
     public bool IsGenerated { get; private set; } = false;
 
@@ -212,28 +229,49 @@ public class IslandManager : MonoBehaviour
 
         IslandType[] nonPlainsTypes = { IslandType.Desert, IslandType.Jungle, IslandType.Stone };
 
+        // Test-Modus: exakt das fixe, deterministiche 2-Inseln-Layout (nebeneinander).
+        bool testMode = TestModeManager.IsTestRoom() && TestModeManager.TestIslandLayout != null
+                        && TestModeManager.TestIslandLayout.Length > 0;
+        if (testMode)
+        {
+            islandCount = TestModeManager.TestIslandLayout.Length;
+            blocksPerIsland = 1100;
+            Debug.Log("[IslandManager] TEST-MODUS: 2 fixe Inseln nebeneinander.");
+        }
+
         int attempts = 0;
         while (islandPositions.Count < islandCount && attempts < 5000)
         {
             attempts++;
-            float x = Mathf.Round(Random.Range(-range, range));
-            float y = Mathf.Round(Random.Range(-range, range));
-            Vector2 newPos = new Vector2(x, y);
+            Vector2 newPos;
+            if (testMode)
+            {
+                newPos = TestModeManager.TestIslandLayout[islandPositions.Count];
+            }
+            else
+            {
+                float x = Mathf.Round(Random.Range(-range, range));
+                float y = Mathf.Round(Random.Range(-range, range));
+                newPos = new Vector2(x, y);
+            }
 
             bool tooClose = false;
-            foreach (Vector2 p in islandPositions)
+            if (!testMode)
             {
-                if (Vector2.Distance(p, newPos) < minDistanceBetweenIslands)
+                foreach (Vector2 p in islandPositions)
                 {
-                    tooClose = true;
-                    break;
+                    if (Vector2.Distance(p, newPos) < minDistanceBetweenIslands)
+                    {
+                        tooClose = true;
+                        break;
+                    }
                 }
             }
 
             if (!tooClose)
             {
                 IslandType type;
-                if (islandPositions.Count < playerCount)
+                if (testMode || islandPositions.Count < playerCount)
                     type = IslandType.Plains;
                 else
                     type = nonPlainsTypes[Random.Range(0, nonPlainsTypes.Length)];

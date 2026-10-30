@@ -642,6 +642,9 @@ public class BuildingInstance : MonoBehaviour
         }
     }
 
+    private int OccupiedWidth => footprintWidthOverride > 0 ? footprintWidthOverride : (data != null ? data.width : 1);
+    private int OccupiedHeight => footprintHeightOverride > 0 ? footprintHeightOverride : (data != null ? data.height : 1);
+
     private void TransferIslandBuildings()
     {
         Vector2Int gridPos = new Vector2Int(Mathf.RoundToInt(transform.position.x), Mathf.RoundToInt(transform.position.y));
@@ -661,6 +664,9 @@ public class BuildingInstance : MonoBehaviour
 
     private void Die()
     {
+        // Belegte Zellen wieder freigeben (war vorher ein permanentes Leak!)
+        BuildingManager.FreeOccupancy(transform.position, OccupiedWidth, OccupiedHeight);
+
         // Warehouse capture: Gebäude auf der Insel übernehmen
         if (data != null && data.isWarehouseType)
         {
@@ -686,15 +692,18 @@ public class BuildingInstance : MonoBehaviour
             }
         }
 
-        // Game Over check: nur für eigene Gebäude
+        // Game Over check: nur für eigene Gebäude (Register statt FindObjectsOfType)
         if (isLocal && data != null && (data.isWarehouseType || data.canBuildOnOtherIslands))
         {
             bool anyLeft = false;
-            foreach (var wh in FindObjectsOfType<Warehouse>())
-                if (wh != null && wh.isLocal) { anyLeft = true; break; }
+            if (WarehouseManager.Instance != null)
+            {
+                foreach (var wh in WarehouseManager.Instance.LocalWarehouses)
+                    if (wh != null && wh.isLocal) { anyLeft = true; break; }
+            }
             if (!anyLeft)
             {
-                foreach (var bi in FindObjectsOfType<BuildingInstance>())
+                foreach (var bi in BuildingInstance.AllBuildings)
                     if (bi != null && bi.isLocal && bi.data != null && bi.data.isWarehouseType) { anyLeft = true; break; }
             }
             if (!anyLeft)
@@ -950,52 +959,21 @@ public class BuildingInstance : MonoBehaviour
             int column = formationIndex % columns;
             Vector2 spawnOffset = new Vector2((column - 1) * 0.8f, -0.75f - row * 0.65f);
             Vector3 spawnPos = transform.position + new Vector3(spawnOffset.x, spawnOffset.y, 0f);
-            
-            // Create Soldier
-            GameObject solObj = new GameObject($"Player_Soldier_{currentRecruitingType}");
-            solObj.transform.position = spawnPos;
-            solObj.transform.rotation = Quaternion.identity;
 
-            SpriteRenderer sr = solObj.AddComponent<SpriteRenderer>();
-            sr.sortingOrder = 21;
-
-            BoxCollider2D bc = solObj.AddComponent<BoxCollider2D>();
-            bc.size = new Vector2(1f, 1f);
-
-            Soldier s = solObj.AddComponent<Soldier>();
-            s.netId = Soldier.nextNetIdValue;
-            Soldier.nextNetIdValue++;
-            s.soldierType = currentRecruitingType;
-            s.team = Team.Player;
-            s.moveSpeed = 1.5f;
-            if (Photon.Pun.PhotonNetwork.LocalPlayer != null)
-            {
-                s.ownerActorNumber = Photon.Pun.PhotonNetwork.LocalPlayer.ActorNumber;
-            }
-
-            FogRevealer fr = solObj.AddComponent<FogRevealer>();
-            fr.radius = 4f;
-            fr.isLocalPlayer = true;
-
-            // Map BarracksResource to WeaponMaterial (top-level enum)
+            // Zentraler Soldier-Spawner: erzeugt + broadcastet (Event 12)
+            WeaponMaterial spawnMaterial = WeaponMaterial.Stone;
             switch (currentRecruitingResource)
             {
-                case BarracksResource.Wood:  s.weaponMaterial = WeaponMaterial.Wood; break;
-                case BarracksResource.Stone: s.weaponMaterial = WeaponMaterial.Stone; break;
-                case BarracksResource.Gold:  s.weaponMaterial = WeaponMaterial.Gold; break;
-                case BarracksResource.Iron:  s.weaponMaterial = WeaponMaterial.Iron; break;
+                case BarracksResource.Wood:  spawnMaterial = WeaponMaterial.Wood; break;
+                case BarracksResource.Stone: spawnMaterial = WeaponMaterial.Stone; break;
+                case BarracksResource.Gold:  spawnMaterial = WeaponMaterial.Gold; break;
+                case BarracksResource.Iron:  spawnMaterial = WeaponMaterial.Iron; break;
             }
+            int ownerActor = Photon.Pun.PhotonNetwork.LocalPlayer != null ? Photon.Pun.PhotonNetwork.LocalPlayer.ActorNumber : 1;
+            NetCombat.SpawnSoldier(currentRecruitingType, spawnMaterial, spawnPos, ownerActor, true);
 
             // Play recruitment particles!
             SpawnProductionParticles();
-
-            if (PhotonNetwork.InRoom)
-            {
-                object[] syncData = new object[] { s.netId, (int)currentRecruitingType, spawnPos.x, spawnPos.y, s.ownerActorNumber };
-                SendOptions sendOpts = new SendOptions { Reliability = true };
-                PhotonNetwork.RaiseEvent(12, syncData,
-                    new RaiseEventOptions { Receivers = ReceiverGroup.Others }, sendOpts);
-            }
 
             Destroy(candidate.gameObject);
         }

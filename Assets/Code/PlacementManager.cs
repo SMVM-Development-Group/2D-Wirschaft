@@ -227,11 +227,12 @@ private bool CheckIslandOwnership(Vector2 center, int occupiedWidth = 0, int occ
         // Für alle anderen Gebäude: Prüfe ob auf eigener Insel
         Vector2Int gridPos = new Vector2Int(Mathf.RoundToInt(center.x), Mathf.RoundToInt(center.y));
         
-        // Finde die nächste eigene Insel (Lagerhaus oder Lagerhaus-Typ Gebäude)
-        foreach (var wh in FindObjectsOfType<Warehouse>())
+        // Finde die nächste eigene Insel (Register statt FindObjectsOfType pro Frame)
+        if (WarehouseManager.Instance != null)
         {
-            if (wh != null && wh.isLocal)
+            foreach (var wh in WarehouseManager.Instance.LocalWarehouses)
             {
+                if (wh == null) continue;
                 Vector2Int whGrid = new Vector2Int(
                     Mathf.RoundToInt(wh.transform.position.x),
                     Mathf.RoundToInt(wh.transform.position.y)
@@ -241,9 +242,10 @@ private bool CheckIslandOwnership(Vector2 center, int occupiedWidth = 0, int occ
             }
         }
 
-        // Auch Lagerhaus-Typ Gebäude als Ankerpunkte
-        foreach (var bi in FindObjectsOfType<BuildingInstance>())
+        // Auch Lagerhaus-Typ Gebäude als Ankerpunkte (statisches Register)
+        for (int i = 0; i < BuildingInstance.AllBuildings.Count; i++)
         {
+            BuildingInstance bi = BuildingInstance.AllBuildings[i];
             if (bi != null && bi.isLocal && bi.data != null && bi.data.isWarehouseType)
             {
                 Vector2Int biGrid = new Vector2Int(
@@ -255,7 +257,7 @@ private bool CheckIslandOwnership(Vector2 center, int occupiedWidth = 0, int occ
             }
         }
 
-        NotificationManager.Instance?.Notify("island_no_warehouse", 
+        NotificationManager.Instance?.Notify("island_no_warehouse",
             "Du brauchst zuerst ein Lagerhaus auf dieser Insel!", 3f);
         return false;
     }
@@ -279,13 +281,13 @@ private bool CheckIslandOwnership(Vector2 center, int occupiedWidth = 0, int occ
         // Finde alle Stege die zu einer Insel mit eigenem Lagerhaus gehören
         HashSet<Vector2Int> validStegPositions = new HashSet<Vector2Int>();
         
-        // Sammle lokale Lagerhaus-Positionen
-        Warehouse[] warehouses = Object.FindObjectsOfType<Warehouse>();
+        // Sammle lokale Lagerhaus-Positionen (Register statt FindObjectsOfType)
         List<Vector2Int> localWarehousePositions = new List<Vector2Int>();
-        foreach (var wh in warehouses)
+        if (WarehouseManager.Instance != null)
         {
-            if (wh != null && wh.isLocal)
+            foreach (var wh in WarehouseManager.Instance.LocalWarehouses)
             {
+                if (wh == null) continue;
                 localWarehousePositions.Add(new Vector2Int(
                     Mathf.RoundToInt(wh.transform.position.x),
                     Mathf.RoundToInt(wh.transform.position.y)
@@ -398,10 +400,11 @@ private bool CheckIslandOwnership(Vector2 center, int occupiedWidth = 0, int occ
 
     private bool IsWarehouseOnIsland(Vector2Int islandPos)
     {
-        foreach (var wh in FindObjectsOfType<Warehouse>())
+        if (WarehouseManager.Instance != null)
         {
-            if (wh != null && wh.isLocal)
+            foreach (var wh in WarehouseManager.Instance.LocalWarehouses)
             {
+                if (wh == null) continue;
                 Vector2Int whGrid = new Vector2Int(
                     Mathf.RoundToInt(wh.transform.position.x),
                     Mathf.RoundToInt(wh.transform.position.y)
@@ -410,8 +413,9 @@ private bool CheckIslandOwnership(Vector2 center, int occupiedWidth = 0, int occ
                     return true;
             }
         }
-        foreach (var bi in FindObjectsOfType<BuildingInstance>())
+        for (int i = 0; i < BuildingInstance.AllBuildings.Count; i++)
         {
+            BuildingInstance bi = BuildingInstance.AllBuildings[i];
             if (bi != null && bi.isLocal && bi.data != null && bi.data.isWarehouseType)
             {
                 Vector2Int biGrid = new Vector2Int(
@@ -427,9 +431,12 @@ private bool CheckIslandOwnership(Vector2 center, int occupiedWidth = 0, int occ
 
     private bool HasWorkerOnIsland(Vector2 center)
     {
-        Villager[] villagers = FindObjectsOfType<Villager>();
         Vector2Int centerGrid = new Vector2Int(Mathf.RoundToInt(center.x), Mathf.RoundToInt(center.y));
         Vector2Int[] directions = { Vector2Int.up, Vector2Int.down, Vector2Int.left, Vector2Int.right };
+
+        if (VillagerManager.Instance == null) return false;
+        var villagers = VillagerManager.Instance.ActiveVillagers;
+        if (villagers == null) return false;
 
         foreach (var v in villagers)
         {
@@ -610,19 +617,19 @@ private bool ValidateShipPlacement(Vector2 center, int rotationDegrees, int occu
         Vector2Int[] directions = { Vector2Int.up, Vector2Int.down, Vector2Int.left, Vector2Int.right };
         
         // Sammle alle gültigen Steg-Positionen (zu Inseln mit Lagerhaus gehörend)
-        Warehouse[] warehouses = Object.FindObjectsOfType<Warehouse>();
         List<Vector2Int> localWarehousePositions = new List<Vector2Int>();
-        foreach (var wh in warehouses)
+        if (WarehouseManager.Instance != null)
         {
-            if (wh != null && wh.isLocal)
+            foreach (var wh in WarehouseManager.Instance.LocalWarehouses)
             {
+                if (wh == null) continue;
                 localWarehousePositions.Add(new Vector2Int(
                     Mathf.RoundToInt(wh.transform.position.x),
                     Mathf.RoundToInt(wh.transform.position.y)
                 ));
             }
         }
-        
+
         List<Vector2Int> allStegPositions = BuildingManager.GetStegPositions();
         HashSet<Vector2Int> stegSet = new HashSet<Vector2Int>(allStegPositions);
         HashSet<Vector2Int> validStegPositions = new HashSet<Vector2Int>();
@@ -771,12 +778,12 @@ private List<ShipPlacementCandidate> GetShipCandidates(Vector3 worldPos)
         Vector2Int[] outwardOptions = new Vector2Int[] { Vector2Int.up, Vector2Int.down, Vector2Int.left, Vector2Int.right };
 
         // Sammle gültige Steg-Positionen (zu Inseln mit Lagerhaus)
-        Warehouse[] warehouses = Object.FindObjectsOfType<Warehouse>();
         List<Vector2Int> localWarehousePositions = new List<Vector2Int>();
-        foreach (var wh in warehouses)
+        if (WarehouseManager.Instance != null)
         {
-            if (wh != null && wh.isLocal)
+            foreach (var wh in WarehouseManager.Instance.LocalWarehouses)
             {
+                if (wh == null) continue;
                 localWarehousePositions.Add(new Vector2Int(
                     Mathf.RoundToInt(wh.transform.position.x),
                     Mathf.RoundToInt(wh.transform.position.y)
@@ -902,11 +909,19 @@ private List<ShipPlacementCandidate> GetShipCandidates(Vector3 worldPos)
     private void PlaceBuilding(PlacementPreview preview)
     {
         ResourceManager.Instance.SpendResources(currentBuilding.woodCost, currentBuilding.stoneCost, currentBuilding.ironCost, currentBuilding.goldCost);
-        BuildingManager.Instance.SpawnBuilding(currentBuilding, preview.center, true, preview.rotationDegrees, preview.occupiedWidth, preview.occupiedHeight);
+        BuildingInstance instance = BuildingManager.Instance.SpawnBuilding(currentBuilding, preview.center, true, preview.rotationDegrees, preview.occupiedWidth, preview.occupiedHeight);
+
+        // Schiff-ID an andere Clients weitergeben (damit HP/Sync am richtigen Objekt ankommt)
+        int shipId = 0;
+        if (instance != null && currentBuilding.placementRule == PlacementRule.Ship)
+        {
+            Ship shipComp = instance.GetComponent<Ship>();
+            if (shipComp != null) shipId = shipComp.ShipNetId;
+        }
 
         if (Photon.Pun.PhotonNetwork.InRoom)
         {
-            object[] content = new object[] { currentBuilding.buildingName, preview.center, preview.rotationDegrees, preview.occupiedWidth, preview.occupiedHeight };
+            object[] content = new object[] { currentBuilding.buildingName, preview.center, preview.rotationDegrees, preview.occupiedWidth, preview.occupiedHeight, shipId };
             ExitGames.Client.Photon.SendOptions sendOptions = new ExitGames.Client.Photon.SendOptions { Reliability = true };
             Photon.Pun.PhotonNetwork.RaiseEvent(2, content, new Photon.Realtime.RaiseEventOptions { Receivers = Photon.Realtime.ReceiverGroup.Others }, sendOptions);
         }
@@ -1036,7 +1051,7 @@ private List<ShipPlacementCandidate> GetShipCandidates(Vector3 worldPos)
         int built = 0;
         foreach (Vector2Int cell in cells)
         {
-            if (BuildingManager.Instance.PlaceStegAt(new Vector2(cell.x, cell.y), true))
+            if (BuildingManager.Instance.PlaceStegAt(new Vector2(cell.x, cell.y), true, false, currentBuilding))
                 built++;
         }
 

@@ -127,8 +127,63 @@ public class SelectionManager : MonoBehaviour
             return;
         }
 
+        if (Mouse.current.rightButton.wasPressedThisFrame)
+        {
+            HandleRightClick();
+        }
+
         UpdateHoverHighlight();
         HandleLeftMouseFlow();
+    }
+
+    private void HandleRightClick()
+    {
+        if (selectedSoldiers.Count == 0) return;
+
+        Vector2 mousePos = Mouse.current.position.ReadValue();
+        Vector3 worldPos = cam.ScreenToWorldPoint(new Vector3(mousePos.x, mousePos.y, -cam.transform.position.z));
+
+        Collider2D[] hits = Physics2D.OverlapPointAll((Vector2)worldPos);
+        BuildingInstance targetBuilding = null;
+        Soldier targetSoldier = null;
+
+        foreach (var hit in hits)
+        {
+            if (targetBuilding == null)
+            {
+                BuildingInstance b = hit.GetComponent<BuildingInstance>();
+                if (b != null && !b.isLocal)
+                    targetBuilding = b;
+            }
+            if (targetSoldier == null)
+            {
+                Soldier s = hit.GetComponent<Soldier>();
+                if (s != null && s.IsHostileTo(selectedSoldiers[0]))
+                    targetSoldier = s;
+            }
+            if (targetBuilding != null && targetSoldier != null) break;
+        }
+
+        if (targetBuilding != null)
+        {
+            foreach (var s in selectedSoldiers)
+                if (s != null) s.IssueAttackBuildingOrder(targetBuilding);
+            pendingCommandMode = ArmyCommandMode.None;
+            RefreshCommandUi();
+        }
+        else if (targetSoldier != null)
+        {
+            foreach (var s in selectedSoldiers)
+                if (s != null) s.IssueAttackOrder(targetSoldier);
+            pendingCommandMode = ArmyCommandMode.None;
+            RefreshCommandUi();
+        }
+        else
+        {
+            IssueFormationCommand((Vector2)worldPos, false);
+            pendingCommandMode = ArmyCommandMode.None;
+            RefreshCommandUi();
+        }
     }
 
     public void BeginMoveCommand()

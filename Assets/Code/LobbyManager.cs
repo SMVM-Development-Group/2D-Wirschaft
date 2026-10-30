@@ -38,10 +38,10 @@ public class LobbyManager : MonoBehaviourPunCallbacks, IOnEventCallback
     [SerializeField] private Sprite pfeil2;
     [SerializeField] private Sprite pfeil3;
 
-    private readonly Color bgColor = new Color(0.06f, 0.08f, 0.10f, 1f);
-    private readonly Color panelColor = new Color(0.13f, 0.09f, 0.05f, 0.95f);
-    private readonly Color accentColor = new Color(0.86f, 0.67f, 0.26f, 1f);
-    private readonly Color labelColor = new Color(0.95f, 0.92f, 0.82f, 1f);
+    private readonly Color bgColor     = GameUITheme.ScreenBackdrop;
+    private readonly Color panelColor  = GameUITheme.PanelBackground;
+    private readonly Color accentColor = GameUITheme.AccentGold;
+    private readonly Color labelColor  = GameUITheme.LabelParchment;
 
     private readonly int[] speedOptions = { 1, 2, 3 };
     private readonly float[] dayLengthOptions = { 60f, 90f, 150f };
@@ -62,18 +62,27 @@ public class LobbyManager : MonoBehaviourPunCallbacks, IOnEventCallback
     private Button[] worldSizeButtons;
     private Button[] debugModeButtons;
 
-    private void OnEnable()
+    private new void OnEnable()
     {
         PhotonNetwork.AddCallbackTarget(this);
     }
 
-    private void OnDisable()
+    private new void OnDisable()
     {
         PhotonNetwork.RemoveCallbackTarget(this);
     }
 
     private void Start()
     {
+        // Direkt in der LobbyScene gestartet (z.B. Play ohne MainMenu-Pfad) bzw. verlorene Verbindung?
+        // Die Lobby ist nur mit einem echten Raum sinnvoll — sonst zeigt sie nur Platzhalter.
+        if (!PhotonNetwork.InRoom)
+        {
+            Debug.Log("[Lobby] Keine aktive Lobby — zurück zum Hauptmenü.");
+            UnityEngine.SceneManagement.SceneManager.LoadScene(SceneNames.StartMenuScene);
+            return;
+        }
+
         PhotonNetwork.AutomaticallySyncScene = true;
 
         if (leaveRoomButton != null)
@@ -139,8 +148,7 @@ public class LobbyManager : MonoBehaviourPunCallbacks, IOnEventCallback
 
         if (isTestMode)
         {
-            playerListText.text += "• Dummy Player 1  (Bot)\n";
-            playerListText.text += "• Dummy Player 2  (Bot)\n";
+            playerListText.text += "• TESTBOT  (verbindet sich gleich wie ein echter Spieler)\n";
             if (startTestButton != null && PhotonNetwork.IsMasterClient)
             {
                 startTestButton.gameObject.SetActive(true);
@@ -177,36 +185,54 @@ public class LobbyManager : MonoBehaviourPunCallbacks, IOnEventCallback
         settingsSummaryText.text = $"Tempo {speed}x   •   Tag {GetDayLengthLabel(dayLength)}   •   Start {villagers} Dorfbewohner / {workers} Bauarbeiter   •   Welt {worldSize}{(debugMode ? "   •   DEBUG" : "")}";
     }
 
+    private float testAutoStartTimer = -1f;
+
+    private void StartGameNow()
+    {
+        if (!PhotonNetwork.InRoom || !PhotonNetwork.IsMasterClient) return;
+        PhotonNetwork.CurrentRoom.SetCustomProperties(new ExitGames.Client.Photon.Hashtable {
+            { LobbySettingsKeys.GameStarted, true },
+            { LobbySettingsKeys.InitialPlayerCount, PhotonNetwork.CurrentRoom.PlayerCount }
+        });
+        PhotonNetwork.LoadLevel(SceneNames.GameScene);
+    }
+
     private void OnStartTestButtonClicked()
     {
-        if (PhotonNetwork.IsMasterClient)
-        {
-            PhotonNetwork.CurrentRoom.SetCustomProperties(new ExitGames.Client.Photon.Hashtable { 
-                { LobbySettingsKeys.GameStarted, true },
-                { LobbySettingsKeys.InitialPlayerCount, PhotonNetwork.CurrentRoom.PlayerCount }
-            });
-            PhotonNetwork.LoadLevel(SceneNames.GameScene);
-        }
+        StartGameNow();
     }
 
     public void OnLeaveRoomButtonClicked()
     {
+        if (!PhotonNetwork.InRoom)
+        {
+            Debug.Log("[Lobby] LeaveRoom ignoriert — keine Lobby aktiv.");
+            return;
+        }
+
         if (leaveRoomButton != null) leaveRoomButton.interactable = false;
         PhotonNetwork.LeaveRoom();
     }
 
     private void CheckAutoStart()
     {
-        if (!PhotonNetwork.InRoom) return;
+        if (!PhotonNetwork.InRoom || !PhotonNetwork.IsMasterClient) return;
 
         bool isTestMode = PhotonNetwork.CurrentRoom.CustomProperties.ContainsKey("TestMode") && (bool)PhotonNetwork.CurrentRoom.CustomProperties["TestMode"];
-        if (!isTestMode && PhotonNetwork.IsMasterClient && PhotonNetwork.CurrentRoom.PlayerCount == PhotonNetwork.CurrentRoom.MaxPlayers)
+        if (isTestMode)
         {
-            PhotonNetwork.CurrentRoom.SetCustomProperties(new ExitGames.Client.Photon.Hashtable { 
-                { LobbySettingsKeys.GameStarted, true },
-                { LobbySettingsKeys.InitialPlayerCount, PhotonNetwork.CurrentRoom.PlayerCount }
-            });
-            PhotonNetwork.LoadLevel(SceneNames.GameScene);
+            // Test-Lobby startet automatisch kurz nach dem Erstellen — der echte TESTBOT
+            // verbindet sich SEINE eigene Photon-Verbindung erst in der GameScene.
+            if (testAutoStartTimer < 0f)
+            {
+                testAutoStartTimer = 2f;
+                if (settingsSummaryText != null)
+                    settingsSummaryText.text += "   →  Start in 2s...";
+            }
+        }
+        else if (PhotonNetwork.CurrentRoom.PlayerCount == PhotonNetwork.CurrentRoom.MaxPlayers)
+        {
+            StartGameNow();
         }
     }
 
@@ -278,12 +304,12 @@ public class LobbyManager : MonoBehaviourPunCallbacks, IOnEventCallback
         RectTransform rightCard = CreateCard(root, "LobbyRightCard", new Vector2(0.43f, 0.10f), new Vector2(0.95f, 0.90f));
 
         CreateReadoutProxy(leftCard, "LobbyReadout", roomInfoText, new Vector2(18f, -18f), new Vector2(-18f, 62f), 28f, FontStyles.Bold, labelColor);
-        CreateReadoutProxy(leftCard, "PlayersReadout", playerListText, new Vector2(18f, -94f), new Vector2(-18f, 300f), 20f, FontStyles.Normal, new Color(0.89f, 0.90f, 0.86f, 1f));
-        CreateReadoutProxy(leftCard, "HostNoteReadout", masterClientNoteText, new Vector2(18f, -404f), new Vector2(-18f, 92f), 16f, FontStyles.Italic, new Color(0.86f, 0.80f, 0.63f, 1f));
+        CreateReadoutProxy(leftCard, "PlayersReadout", playerListText, new Vector2(18f, -94f), new Vector2(-18f, 300f), 20f, FontStyles.Normal, GameUITheme.LabelPrimary);
+        CreateReadoutProxy(leftCard, "HostNoteReadout", masterClientNoteText, new Vector2(18f, -404f), new Vector2(-18f, 92f), 16f, FontStyles.Italic, GameUITheme.LabelSecondary);
 
         if (leaveRoomButton != null)
         {
-            CreateButtonProxy(leftCard, "LeaveProxy", leaveRoomButton, "Lobby verlassen", new Color(0.40f, 0.17f, 0.12f, 1f), 16f, 56f);
+            CreateButtonProxy(leftCard, "LeaveProxy", leaveRoomButton, "Lobby verlassen", GameUITheme.ButtonDanger, 16f, 56f);
         }
 
         if (joinLogUI != null && joinLogUI.transform is RectTransform joinLogRt)
@@ -295,9 +321,9 @@ public class LobbyManager : MonoBehaviourPunCallbacks, IOnEventCallback
             logPanel.anchoredPosition = new Vector2(0f, 84f);
             logPanel.sizeDelta = new Vector2(-32f, 92f);
             Image logBg = logPanel.gameObject.AddComponent<Image>();
-            logBg.color = new Color(0.09f, 0.11f, 0.12f, 0.70f);
+            logBg.color = GameUITheme.PanelBackgroundSoft;
             Outline logOutline = logPanel.gameObject.AddComponent<Outline>();
-            logOutline.effectColor = new Color(accentColor.r, accentColor.g, accentColor.b, 0.35f);
+            logOutline.effectColor = GameUITheme.OutlineGold;
             logOutline.effectDistance = new Vector2(1f, -1f);
         }
 
@@ -305,7 +331,7 @@ public class LobbyManager : MonoBehaviourPunCallbacks, IOnEventCallback
 
         if (startTestButton != null)
         {
-            CreateButtonProxy(leftCard, "TestProxy", startTestButton, "Testspiel starten", new Color(0.18f, 0.24f, 0.34f, 1f), 82f, 50f);
+            CreateButtonProxy(leftCard, "TestProxy", startTestButton, "Testspiel starten", GameUITheme.ButtonConfirm, 82f, 50f);
         }
 
         CreateSettingsPanel(rightCard);
@@ -316,7 +342,7 @@ public class LobbyManager : MonoBehaviourPunCallbacks, IOnEventCallback
         CreateStaticLabel(parent, "SPIEL SETTINGS", 24f, new Vector2(20f, -20f), new Vector2(-20f, 34f));
 
         settingsSummaryText = CreateStaticLabel(parent, "", 15f, new Vector2(20f, -60f), new Vector2(-20f, 44f));
-        settingsSummaryText.color = new Color(0.86f, 0.88f, 0.90f, 1f);
+        settingsSummaryText.color = GameUITheme.LabelPrimary;
 
         settingsRoot = CreateRect("SettingsRoot", parent);
         settingsRoot.anchorMin = new Vector2(0f, 0f);
@@ -370,9 +396,9 @@ public class LobbyManager : MonoBehaviourPunCallbacks, IOnEventCallback
         le.minHeight = 46f;
         le.minWidth = 0f;
         Image img = btnGO.GetComponent<Image>();
-        img.color = new Color(0.29f, 0.21f, 0.12f, 1f);
+        img.color = GameUITheme.ButtonPressed;
         Outline outline = btnGO.AddComponent<Outline>();
-        outline.effectColor = new Color(accentColor.r, accentColor.g, accentColor.b, 0.5f);
+        outline.effectColor = GameUITheme.OutlineGoldStrong;
         outline.effectDistance = new Vector2(2f, -2f);
 
         Button btn = btnGO.GetComponent<Button>();
@@ -396,7 +422,7 @@ public class LobbyManager : MonoBehaviourPunCallbacks, IOnEventCallback
         startBtnRT.sizeDelta = new Vector2(-36f, 56f);
 
         Image startBtnImg = startBtnGO.GetComponent<Image>();
-        startBtnImg.color = new Color(0.24f, 0.38f, 0.22f, 1f);
+        startBtnImg.color = GameUITheme.ButtonConfirm;
         Outline outline = startBtnGO.AddComponent<Outline>();
         outline.effectColor = accentColor;
         outline.effectDistance = new Vector2(2f, -2f);
@@ -421,13 +447,13 @@ public class LobbyManager : MonoBehaviourPunCallbacks, IOnEventCallback
         chatRoot.offsetMax = Vector2.zero;
 
         Image chatBg = chatRoot.gameObject.AddComponent<Image>();
-        chatBg.color = new Color(0.09f, 0.11f, 0.14f, 0.95f);
+        chatBg.color = GameUITheme.PanelBackground;
         Outline chatOutline = chatRoot.gameObject.AddComponent<Outline>();
         chatOutline.effectColor = accentColor;
         chatOutline.effectDistance = new Vector2(2f, -2f);
 
         TextMeshProUGUI title = CreateStaticLabel(chatRoot, "LOBBY-CHAT", 16f, new Vector2(14f, -10f), new Vector2(-28f, 22f));
-        title.color = new Color(0.85f, 0.80f, 0.65f, 1f);
+        title.color = GameUITheme.LabelParchment;
         title.alignment = TextAlignmentOptions.TopLeft;
         title.raycastTarget = false;
 
@@ -444,8 +470,8 @@ public class LobbyManager : MonoBehaviourPunCallbacks, IOnEventCallback
         chatLogText.text = "Schreibe eine Nachricht, um den Lobby-Chat zu testen.";
         chatLogText.fontSize = 14f;
         chatLogText.alignment = TextAlignmentOptions.TopLeft;
-        chatLogText.color = new Color(0.92f, 0.92f, 0.92f, 1f);
-        chatLogText.enableWordWrapping = true;
+        chatLogText.color = GameUITheme.LabelPrimary;
+        chatLogText.textWrappingMode = TextWrappingModes.Normal;
         chatLogText.overflowMode = TextOverflowModes.Truncate;
         chatLogText.raycastTarget = false;
 
@@ -464,9 +490,9 @@ public class LobbyManager : MonoBehaviourPunCallbacks, IOnEventCallback
         inputFieldRect.offsetMax = Vector2.zero;
 
         Image inputBg = inputFieldRect.gameObject.AddComponent<Image>();
-        inputBg.color = new Color(0.12f, 0.14f, 0.18f, 0.95f);
+        inputBg.color = GameUITheme.InputBackground;
         Outline inputOutline = inputFieldRect.gameObject.AddComponent<Outline>();
-        inputOutline.effectColor = new Color(0.5f, 0.5f, 0.55f, 0.7f);
+        inputOutline.effectColor = GameUITheme.InputOutline;
         inputOutline.effectDistance = new Vector2(1f, -1f);
 
         chatInputField = inputFieldRect.gameObject.AddComponent<TMP_InputField>();
@@ -484,7 +510,7 @@ public class LobbyManager : MonoBehaviourPunCallbacks, IOnEventCallback
 
         chatSendButton = buttonRect.gameObject.AddComponent<Button>();
         Image buttonImage = buttonRect.gameObject.AddComponent<Image>();
-        buttonImage.color = new Color(0.22f, 0.33f, 0.18f, 1f);
+        buttonImage.color = GameUITheme.ButtonConfirm;
         Outline buttonOutline = buttonRect.gameObject.AddComponent<Outline>();
         buttonOutline.effectColor = accentColor;
         buttonOutline.effectDistance = new Vector2(2f, -2f);
@@ -509,7 +535,7 @@ public class LobbyManager : MonoBehaviourPunCallbacks, IOnEventCallback
         btnRect.sizeDelta = new Vector2(32f, 28f);
 
         Image btnImage = btnRect.gameObject.AddComponent<Image>();
-        btnImage.color = new Color(0.14f, 0.17f, 0.22f, 0.95f);
+        btnImage.color = GameUITheme.ButtonNormal;
         btnImage.raycastTarget = true;
 
         Button minimizeButton = btnRect.gameObject.AddComponent<Button>();
@@ -546,6 +572,17 @@ public class LobbyManager : MonoBehaviourPunCallbacks, IOnEventCallback
 
     private void Update()
     {
+        // Test-Modus: Auto-Start (Host muss nichts klicken — der TESTBOT connectet sich selbst).
+        if (testAutoStartTimer > 0f && PhotonNetwork.IsMasterClient)
+        {
+            testAutoStartTimer -= Time.deltaTime;
+            if (testAutoStartTimer <= 0f)
+            {
+                testAutoStartTimer = -1f;
+                StartGameNow();
+            }
+        }
+
         if (chatPanelRoot == null) return;
         if (Keyboard.current == null || !Keyboard.current.tKey.wasPressedThisFrame) return;
         if (chatInputField != null && chatInputField.isFocused) return;
@@ -570,8 +607,8 @@ public class LobbyManager : MonoBehaviourPunCallbacks, IOnEventCallback
         text.text = value;
         text.fontSize = 14f;
         text.alignment = TextAlignmentOptions.Left;
-        text.color = isPlaceholder ? new Color(0.68f, 0.68f, 0.68f, 1f) : new Color(0.95f, 0.95f, 0.95f, 1f);
-        text.enableWordWrapping = false;
+        text.color = isPlaceholder ? GameUITheme.LabelPlaceholder : GameUITheme.LabelPrimary;
+        text.textWrappingMode = TextWrappingModes.NoWrap;
         return text;
     }
 
@@ -666,7 +703,7 @@ public class LobbyManager : MonoBehaviourPunCallbacks, IOnEventCallback
         bool isMaster = PhotonNetwork.IsMasterClient;
         lobbyStartButton.interactable = isMaster;
         startBtnText.text = isMaster ? "SPIEL STARTEN" : "WARTE AUF HOST";
-        startBtnText.color = isMaster ? labelColor : new Color(0.65f, 0.65f, 0.65f, 1f);
+        startBtnText.color = isMaster ? labelColor : GameUITheme.LabelSecondary;
     }
 
     private void UpdateSettingsButtons()
@@ -727,7 +764,7 @@ public class LobbyManager : MonoBehaviourPunCallbacks, IOnEventCallback
             button.interactable = interactable;
             if (!interactable && button.GetComponent<Image>() != null)
             {
-                button.GetComponent<Image>().color = new Color(0.24f, 0.20f, 0.16f, 0.85f);
+                button.GetComponent<Image>().color = GameUITheme.ButtonPressed;
             }
         }
     }
@@ -738,7 +775,7 @@ public class LobbyManager : MonoBehaviourPunCallbacks, IOnEventCallback
         Image img = button.GetComponent<Image>();
         if (img != null)
         {
-            img.color = active ? new Color(0.72f, 0.55f, 0.20f, 1f) : new Color(0.29f, 0.21f, 0.12f, 1f);
+            img.color = active ? GameUITheme.AccentGold : GameUITheme.ButtonPressed;
         }
     }
 
@@ -754,18 +791,14 @@ public class LobbyManager : MonoBehaviourPunCallbacks, IOnEventCallback
         if (PhotonNetwork.IsMasterClient)
         {
             ShowLoadingOverlay();
-            PhotonNetwork.CurrentRoom.SetCustomProperties(new ExitGames.Client.Photon.Hashtable { 
-                { LobbySettingsKeys.GameStarted, true },
-                { LobbySettingsKeys.InitialPlayerCount, PhotonNetwork.CurrentRoom.PlayerCount }
-            });
-            PhotonNetwork.LoadLevel(SceneNames.GameScene);
+            StartGameNow();
         }
     }
 
     private void ShowLoadingOverlay()
     {
         GameObject overlay = new GameObject("LoadingOverlay", typeof(RectTransform), typeof(Image));
-        Canvas canvas = FindObjectOfType<Canvas>();
+        Canvas canvas = FindAnyObjectByType<Canvas>();
         if (canvas != null)
         {
             overlay.transform.SetParent(canvas.transform, false);
@@ -775,7 +808,7 @@ public class LobbyManager : MonoBehaviourPunCallbacks, IOnEventCallback
             rt.offsetMin = Vector2.zero;
             rt.offsetMax = Vector2.zero;
             Image img = overlay.GetComponent<Image>();
-            img.color = new Color(0f, 0f, 0f, 0.85f);
+            img.color = GameUITheme.ScreenBackdrop; // deckt Szene hinten komplett ab
             img.raycastTarget = true;
 
             GameObject loadingText = new GameObject("LoadingText", typeof(RectTransform), typeof(TextMeshProUGUI));
@@ -789,7 +822,7 @@ public class LobbyManager : MonoBehaviourPunCallbacks, IOnEventCallback
             tmp.text = "LADE SPIEL\nBitte warten...";
             tmp.fontSize = 36;
             tmp.alignment = TextAlignmentOptions.Center;
-            tmp.color = Color.white;
+            tmp.color = GameUITheme.LabelPrimary;
         }
     }
 

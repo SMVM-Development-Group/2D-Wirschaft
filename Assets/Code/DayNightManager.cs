@@ -126,10 +126,10 @@ public class DayNightManager : MonoBehaviour
 
         // Setup background styling
         Image bgImg = clockPanel.GetComponent<Image>();
-        bgImg.color = new Color(0.12f, 0.08f, 0.04f, 0.95f); // Sleek dark brown matching other UI
+        bgImg.color = GameUITheme.PanelBackground; // Sleek dark brown matching other UI
         
         var outline = clockPanel.AddComponent<Outline>();
-        outline.effectColor = new Color(0.72f, 0.52f, 0.18f, 1f); // Gold outline
+        outline.effectColor = GameUITheme.AccentGold; // Gold outline
         outline.effectDistance = new Vector2(2f, -2f);
 
         // Text: Day
@@ -138,7 +138,7 @@ public class DayNightManager : MonoBehaviour
         txtClockDay = dayTextGO.GetComponent<TextMeshProUGUI>();
         txtClockDay.fontSize = 13f;
         txtClockDay.alignment = TextAlignmentOptions.Center;
-        txtClockDay.color = new Color(0.9f, 0.78f, 0.52f, 0.85f); // Gold-parchment text color
+        txtClockDay.color = GameUITheme.LabelParchment; // Gold-parchment text color
         txtClockDay.fontStyle = FontStyles.Bold;
 
         RectTransform dayRT = dayTextGO.GetComponent<RectTransform>();
@@ -152,7 +152,7 @@ public class DayNightManager : MonoBehaviour
         txtClockTime = timeTextGO.GetComponent<TextMeshProUGUI>();
         txtClockTime.fontSize = 18f;
         txtClockTime.alignment = TextAlignmentOptions.Center;
-        txtClockTime.color = new Color(1.0f, 0.95f, 0.75f, 1f); // Bright ivory text color
+        txtClockTime.color = GameUITheme.LabelPrimary; // Bright ivory text color
         txtClockTime.fontStyle = FontStyles.Bold;
 
         RectTransform timeRT = timeTextGO.GetComponent<RectTransform>();

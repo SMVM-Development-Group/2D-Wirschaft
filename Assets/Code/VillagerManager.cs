@@ -1,10 +1,16 @@
-using UnityEngine;
+﻿using UnityEngine;
 using System.Collections.Generic;
+using ExitGames.Client.Photon;
 using Photon.Pun;
+using Photon.Realtime;
 
-public class VillagerManager : MonoBehaviour
+public class VillagerManager : MonoBehaviour, IOnEventCallback
 {
     public static VillagerManager Instance;
+
+    /// <summary>Periodischer Villager-Zustands-Sync: { count, (id, x, y, role, visible)* } </summary>
+    public const byte VillagerStateEventCode = 19;
+    private const float VillagerSyncInterval = 0.4f;
 
     [Header("Settings")]
     public GameObject villagerPrefab;
@@ -14,6 +20,15 @@ public class VillagerManager : MonoBehaviour
 
     private List<Villager> activeVillagers = new List<Villager>();
     public IReadOnlyList<Villager> ActiveVillagers => activeVillagers;
+
+    // Remote-Villager (fremder Spieler): nach ID verwaltet, keine Simulation
+    private readonly Dictionary<int, Villager> remoteVillagers = new Dictionary<int, Villager>();
+    private readonly Dictionary<int, int> remoteMissedSnapshots = new Dictionary<int, int>();
+    private readonly HashSet<int> seenInLastSnapshot = new HashSet<int>();
+
+    private float villagerSyncTimer = 0f;
+    private float hudUpdateTimer = 0f;
+
     private List<BuildingInstance> pendingBuildings = new List<BuildingInstance>();
     private float currentFoodMoodEffect = 0f;
     private float currentWheatMoodEffect = 0f;
@@ -28,6 +43,16 @@ public class VillagerManager : MonoBehaviour
     {
         if (Instance == null) Instance = this;
         else Destroy(gameObject);
+    }
+
+    private void OnEnable()
+    {
+        PhotonNetwork.AddCallbackTarget(this);
+    }
+
+    private void OnDisable()
+    {
+        PhotonNetwork.RemoveCallbackTarget(this);
     }
 
     public void SpawnStartingPopulation(int islandIndex)
@@ -67,6 +92,14 @@ public class VillagerManager : MonoBehaviour
         Villager v = vObj.AddComponent<Villager>();
         v.role = role;
         v.isLocal = isLocal;
+        v.isSimulated = isLocal;
+
+        if (isLocal)
+        {
+            // Stabile Netzwerk-ID (Besitzer-Actor steckt in der ID) — auch offline eindeutig
+            v.ownerActorNumber = NetCombat.LocalActorId;
+            v.villagerId = NetCombat.NextId(v.ownerActorNumber);
+        }
         
         // Visual distinction
         SpriteRenderer sr = vObj.GetComponent<SpriteRenderer>();
@@ -84,6 +117,150 @@ public class VillagerManager : MonoBehaviour
         fr.isLocalPlayer = isLocal;
 
         activeVillagers.Add(v);
+    }
+
+    /// <summary>
+    /// Erzeugt (oder aktualisiert) einen Villager, der einem FREMDEN Spieler gehört.
+    /// Kein FogRevealer, keine Simulation — nur Positions-Proxy, der per Event 19 versorgt wird.
+    /// </summary>
+    public Villager SpawnRemoteVillager(int villagerId, Vector2 position, Villager.Role role,
+        int ownerActorNumber, bool visible)
+    {
+        if (villagerId <= 0 || ownerActorNumber == NetCombat.LocalActorId) return null;
+
+        // Schon vorhanden → nur Zustand auffrischen
+        if (remoteVillagers.TryGetValue(villagerId, out Villager existing))
+        {
+            if (existing == null)
+            {
+                remoteVillagers.Remove(villagerId);
+            }
+            else
+            {
+                remoteMissedSnapshots[villagerId] = 0;
+                existing.ApplyNetworkState(position.x, position.y, visible, role);
+                return existing;
+            }
+        }
+
+        EnsurePrefab();
+        GameObject vObj = Instantiate(villagerPrefab, new Vector3(position.x, position.y, -0.2f), Quaternion.identity);
+        vObj.SetActive(true);
+        Villager v = vObj.AddComponent<Villager>();
+        v.villagerId = villagerId;
+        v.ownerActorNumber = ownerActorNumber;
+        v.role = role;
+        v.isLocal = false;
+        v.isSimulated = false;
+        v.ApplyNetworkState(position.x, position.y, visible, role);
+        // Sichtbarkeit aus dem Snapshot respektieren (Schlafende sind unsichtbar)
+
+        SpriteRenderer sr = vObj.GetComponent<SpriteRenderer>();
+        if (sr != null)
+        {
+            sr.color = (role == Villager.Role.Worker) ? Color.orange : Color.white;
+            Sprite custom = Resources.Load<Sprite>(role.ToString());
+            if (custom != null) sr.sprite = custom;
+        }
+
+        remoteVillagers[villagerId] = v;
+        remoteMissedSnapshots[villagerId] = 0;
+        return v;
+    }
+
+    public void OnEvent(EventData photonEvent)
+    {
+        if (photonEvent.Code == VillagerStateEventCode && photonEvent.CustomData is object[] data)
+        {
+            ReceiveVillagerState(data, photonEvent.Sender);
+        }
+    }
+
+    private void ReceiveVillagerState(object[] data, int senderActor)
+    {
+        if (data == null || data.Length < 1) return;
+        int count = (int)data[0];
+
+        seenInLastSnapshot.Clear();
+        int idx = 1;
+        for (int i = 0; i < count && idx + 4 < data.Length; i++, idx += 5)
+        {
+            int villagerId = (int)data[idx];
+            float x = (float)data[idx + 1];
+            float y = (float)data[idx + 2];
+            Villager.Role role = (Villager.Role)(int)data[idx + 3];
+            bool visible = (int)data[idx + 4] > 0;
+
+            Villager v = SpawnRemoteVillager(villagerId, new Vector2(x, y), role,
+                NetCombat.OwnerFromId(villagerId), visible);
+            if (v != null) seenInLastSnapshot.Add(villagerId);
+        }
+
+        // Reconcile — NUR für Villager des Senders dieses Snapshots!
+        // (Ein Snapshot enthält nur eigene Villager; andere Spieler senden eigene Snapshots.)
+        // Alles was hier fehlt, zählt als verpasst → nach 2 verpassten Snapshots ist er
+        // wirklich weg (Tod/Krankheit/Umwandlung zum Soldaten) → entfernen.
+        List<int> toReset = null;
+        foreach (var kvp in remoteVillagers)
+        {
+            if (NetCombat.OwnerFromId(kvp.Key) != senderActor) continue;
+
+            if (seenInLastSnapshot.Contains(kvp.Key))
+            {
+                remoteMissedSnapshots[kvp.Key] = 0;
+            }
+            else
+            {
+                remoteMissedSnapshots.TryGetValue(kvp.Key, out int missed);
+                remoteMissedSnapshots[kvp.Key] = missed + 1;
+
+                if (remoteMissedSnapshots[kvp.Key] >= 2)
+                {
+                    if (toReset == null) toReset = new List<int>();
+                    toReset.Add(kvp.Key);
+                }
+            }
+        }
+
+        if (toReset != null)
+        {
+            foreach (int id in toReset)
+            {
+                if (remoteVillagers.TryGetValue(id, out Villager v) && v != null)
+                {
+                    Destroy(v.gameObject);
+                }
+                remoteVillagers.Remove(id);
+                remoteMissedSnapshots.Remove(id);
+            }
+        }
+    }
+
+    private void BroadcastVillagerState()
+    {
+        if (!PhotonNetwork.InRoom || activeVillagers.Count == 0) return;
+
+        List<object> data = new List<object>();
+        int count = 0;
+        foreach (var v in activeVillagers)
+        {
+            if (v == null || !v.isLocal) continue;
+            data.Add(v.VillagerNetworkId);
+            data.Add(v.transform.position.x);
+            data.Add(v.transform.position.y);
+            data.Add((int)v.role);
+            data.Add(v.IsVisibleToNetwork ? 1 : 0);
+            count++;
+        }
+        if (count == 0) return;
+
+        List<object> payload = new List<object>(data.Count + 1);
+        payload.Add(count);
+        payload.AddRange(data);
+
+        PhotonNetwork.RaiseEvent(VillagerStateEventCode, payload.ToArray(),
+            new RaiseEventOptions { Receivers = ReceiverGroup.Others },
+            new SendOptions { Reliability = false }); // Positionen: unbezuverlässig ist okay, Tod kommt über "fehlen" im Reconcile
     }
 
     private void EnsurePrefab()
@@ -110,12 +287,30 @@ public class VillagerManager : MonoBehaviour
     private void Update()
     {
         UpdateFoodEffect();
-        UpdateHUD();
-        CheckAlerts();
+
+        // HUD/Zähler + Alerts: 4×/s reicht (war: jedes Frame O(2N) über alle Villager)
+        hudUpdateTimer -= Time.deltaTime;
+        if (hudUpdateTimer <= 0f)
+        {
+            hudUpdateTimer = 0.25f;
+            UpdateHUD();
+            CheckAlerts();
+        }
 
         if (pendingBuildings.Count > 0)
         {
             TryAssignWorkers();
+        }
+
+        // Periodischer Villager-Zustands-Broadcast (nur der Besitzer sendet)
+        if (PhotonNetwork.InRoom)
+        {
+            villagerSyncTimer -= Time.deltaTime;
+            if (villagerSyncTimer <= 0f)
+            {
+                villagerSyncTimer = VillagerSyncInterval;
+                BroadcastVillagerState();
+            }
         }
     }
 
@@ -262,11 +457,11 @@ public class VillagerManager : MonoBehaviour
         breakdown.Add("<b>Nahrung:</b>");
         if (currentWheatMoodEffect < -0.001f)
         {
-            breakdown.Add($"<color=#FF5555>Weizen knapp: {currentWheatMoodEffect * 100f:F0}%/s Stimmung</color>");
+            breakdown.Add($"<color={GameUITheme.HtmlBad}>Weizen knapp: {currentWheatMoodEffect * 100f:F0}%/s Stimmung</color>");
         }
         else if (currentWheatMoodEffect > 0.001f)
         {
-            breakdown.Add($"<color=#55FF55>Weizen-Vorrat: +{currentWheatMoodEffect * 100f:F0}%/s Stimmung</color>");
+            breakdown.Add($"<color={GameUITheme.HtmlGood}>Weizen-Vorrat: +{currentWheatMoodEffect * 100f:F0}%/s Stimmung</color>");
         }
         else
         {
@@ -275,7 +470,7 @@ public class VillagerManager : MonoBehaviour
 
         if (currentLuxuryMoodEffect > 0.001f)
         {
-            breakdown.Add($"<color=#55FF55>Luxus (Fleisch/Früchte): +{currentLuxuryMoodEffect * 100f:F0}%/s Stimmung</color>");
+            breakdown.Add($"<color={GameUITheme.HtmlGood}>Luxus (Fleisch/Früchte): +{currentLuxuryMoodEffect * 100f:F0}%/s Stimmung</color>");
         }
 
         breakdown.Add("");
@@ -327,8 +522,8 @@ public class VillagerManager : MonoBehaviour
         {
             float totalPerMinute = totalWorkStressPerSecond * 60f;
             float avgPerMinute = totalPerMinute / workStressCount;
-            breakdown.Add($"<color=#FF5555>Arbeitsstress gesamt ({workStressCount}): {totalPerMinute:F1} Pkt/Min</color>");
-            breakdown.Add($"<color=#FF5555>Ø pro Arbeiter: {avgPerMinute:F1} Pkt/Min</color>");
+            breakdown.Add($"<color={GameUITheme.HtmlBad}>Arbeitsstress gesamt ({workStressCount}): {totalPerMinute:F1} Pkt/Min</color>");
+            breakdown.Add($"<color={GameUITheme.HtmlBad}>Ø pro Arbeiter: {avgPerMinute:F1} Pkt/Min</color>");
         }
         else
         {
@@ -339,8 +534,8 @@ public class VillagerManager : MonoBehaviour
         {
             float totalPerMinute = totalWorkBonusPerSecond * 60f;
             float avgPerMinute = totalPerMinute / workBonusCount;
-            breakdown.Add($"<color=#88FF88>Arbeitsbonus gesamt ({workBonusCount}): +{totalPerMinute:F1} Pkt/Min</color>");
-            breakdown.Add($"<color=#88FF88>Ø pro Arbeiter: +{avgPerMinute:F1} Pkt/Min</color>");
+            breakdown.Add($"<color={GameUITheme.HtmlGood}>Arbeitsbonus gesamt ({workBonusCount}): +{totalPerMinute:F1} Pkt/Min</color>");
+            breakdown.Add($"<color={GameUITheme.HtmlGood}>Ø pro Arbeiter: +{avgPerMinute:F1} Pkt/Min</color>");
         }
 
         breakdown.Add("");
@@ -352,8 +547,8 @@ public class VillagerManager : MonoBehaviour
         {
             float totalPerMinute = totalHousePerSecond * 60f;
             float avgPerMinute = totalPerMinute / houseSleepCount;
-            breakdown.Add($"<color=#55FF55>Haus ({houseSleepCount}): +{totalPerMinute:F1} Pkt/Min gesamt</color>");
-            breakdown.Add($"<color=#55FF55>Ø pro Person: +{avgPerMinute:F1} Pkt/Min</color>");
+            breakdown.Add($"<color={GameUITheme.HtmlGood}>Haus ({houseSleepCount}): +{totalPerMinute:F1} Pkt/Min gesamt</color>");
+            breakdown.Add($"<color={GameUITheme.HtmlGood}>Ø pro Person: +{avgPerMinute:F1} Pkt/Min</color>");
         }
         else
         {
@@ -365,11 +560,11 @@ public class VillagerManager : MonoBehaviour
             float totalPerMinute = totalHomelessPerSecond * 60f;
             float avgPerMinute = totalPerMinute / homelessSleepCount;
             float deltaVsHouse = avgPerMinute - referenceHouseRatePerMinute;
-            breakdown.Add($"<color=#FFAA44>Obdachlosigkeit ({homelessSleepCount}): +{totalPerMinute:F1} Pkt/Min gesamt</color>");
-            breakdown.Add($"<color=#FFAA44>Ø pro Person: +{avgPerMinute:F1} Pkt/Min</color>");
+            breakdown.Add($"<color={GameUITheme.HtmlWarning}>Obdachlosigkeit ({homelessSleepCount}): +{totalPerMinute:F1} Pkt/Min gesamt</color>");
+            breakdown.Add($"<color={GameUITheme.HtmlWarning}>Ø pro Person: +{avgPerMinute:F1} Pkt/Min</color>");
             if (deltaVsHouse < -0.05f)
             {
-                breakdown.Add($"<color=#FF5555>vs. Haus: {deltaVsHouse:F1} Pkt/Min</color>");
+                breakdown.Add($"<color={GameUITheme.HtmlBad}>vs. Haus: {deltaVsHouse:F1} Pkt/Min</color>");
             }
         }
         else
@@ -383,11 +578,11 @@ public class VillagerManager : MonoBehaviour
         float avgDriftPerMinute = avgDriftPerSecond * 60f;
         if (globalMood > 50.1f)
         {
-            breakdown.Add($"<color=#FF5555>Druck nach unten (hohe Stimmung): {avgDriftPerMinute:F1} Pkt/Min</color>");
+            breakdown.Add($"<color={GameUITheme.HtmlBad}>Druck nach unten (hohe Stimmung): {avgDriftPerMinute:F1} Pkt/Min</color>");
         }
         else if (globalMood < 49.9f)
         {
-            breakdown.Add($"<color=#55FF55>Druck nach oben (niedrige Stimmung): +{avgDriftPerMinute:F1} Pkt/Min</color>");
+            breakdown.Add($"<color={GameUITheme.HtmlGood}>Druck nach oben (niedrige Stimmung): +{avgDriftPerMinute:F1} Pkt/Min</color>");
         }
         else
         {
@@ -397,7 +592,7 @@ public class VillagerManager : MonoBehaviour
         float yieldModifier = Mathf.Lerp(0.3f, 1.0f, globalMood / 100f);
         if (yieldModifier < 0.995f)
         {
-            breakdown.Add($"<color=#FF5555>Ertragsmalus (niedrige Stimmung): −{(1f - yieldModifier) * 100f:F0}%</color>");
+            breakdown.Add($"<color={GameUITheme.HtmlBad}>Ertragsmalus (niedrige Stimmung): −{(1f - yieldModifier) * 100f:F0}%</color>");
         }
     }
 

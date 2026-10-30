@@ -21,7 +21,7 @@ public class BuildingManager : MonoBehaviour, IOnEventCallback
     public static bool IsStegAt(Vector2 pos)
     {
         Vector2Int grid = new Vector2Int(Mathf.RoundToInt(pos.x), Mathf.RoundToInt(pos.y));
-        return stegs.Any(s => s.GridPosition == grid);
+        return stegGrids.Contains(grid);
     }
 
     public static bool IsWalkable(Vector2 pos)
@@ -49,6 +49,20 @@ public class BuildingManager : MonoBehaviour, IOnEventCallback
         }
     }
 
+    /// <summary>Gibt die Gebaeudezellen nach Zerstoerung wieder frei (war vorher ein Leak!).</summary>
+    public static void FreeOccupancy(Vector2 center, int width, int height)
+    {
+        float startX = -(width - 1) / 2f;
+        float startY = -(height - 1) / 2f;
+        for (int x = 0; x < width; x++)
+        {
+            for (int y = 0; y < height; y++)
+            {
+                occupiedBuildingCells.Remove(center + new Vector2(startX + x, startY + y));
+            }
+        }
+    }
+
     [Header("Building Prefabs")]
     [SerializeField] private Material warehouseMaterial;
     [Header("Steg Prefab")]
@@ -64,6 +78,8 @@ public class BuildingManager : MonoBehaviour, IOnEventCallback
 
     // aktive Stege
     private static HashSet<Steg> stegs = new HashSet<Steg>();
+    // O(1)-Grid fuer Stege (Pfadfindung fraegt das sehr hauefig ab)
+    private static HashSet<Vector2Int> stegGrids = new HashSet<Vector2Int>();
 
     private void Awake()
     {
@@ -71,14 +87,26 @@ public class BuildingManager : MonoBehaviour, IOnEventCallback
         else Destroy(gameObject);
 
         occupiedBuildingCells.Clear();
+        stegGrids.Clear();
     }
 
     // --- Steg-Management (1x1 Stege im Wasser) ---
-    public static void RegisterSteg(Steg s) => stegs.Add(s);
-    public static void UnregisterSteg(Steg s) => stegs.Remove(s);
+    public static void RegisterSteg(Steg s)
+    {
+        if (s == null) return;
+        stegs.Add(s);
+        stegGrids.Add(s.GridPosition);
+    }
+
+    public static void UnregisterSteg(Steg s)
+    {
+        if (s == null) return;
+        stegs.Remove(s);
+        stegGrids.Remove(s.GridPosition);
+    }
 
     // Platzieren eines Stegs an einer World-Position (X,Y). Gibt true zurück, wenn platziert.
-    public bool PlaceStegAt(Vector2 position, bool isLocal = true, bool skipValidation = false)
+    public bool PlaceStegAt(Vector2 position, bool isLocal = true, bool skipValidation = false, BuildingData data = null)
     {
         if (stegPrefab == null) { Debug.LogWarning("BuildingManager: stegPrefab fehlt"); return false; }
 
@@ -96,10 +124,20 @@ public class BuildingManager : MonoBehaviour, IOnEventCallback
         }
 
         GameObject go = Instantiate(stegPrefab);
+        go.transform.localScale = new Vector3(1.3f, 1.3f, 1f);
+
         Steg steg = go.GetComponent<Steg>();
         if (steg == null)
             steg = go.AddComponent<Steg>();
         steg.Initialize(new Vector3(position.x, position.y, -0.21f));
+
+        if (data != null)
+        {
+            BuildingInstance instance = go.GetComponent<BuildingInstance>();
+            if (instance == null) instance = go.AddComponent<BuildingInstance>();
+            instance.data = data;
+            instance.isLocal = isLocal;
+        }
 
         RegisterOccupancy(position, 1, 1);
         return true;
@@ -161,13 +199,11 @@ public class BuildingManager : MonoBehaviour, IOnEventCallback
 
     public static bool HasPierAdjacency(Vector2Int grid)
     {
-        Vector2Int[] dirs = { new Vector2Int(1, 0), new Vector2Int(-1, 0), new Vector2Int(0, 1), new Vector2Int(0, -1) };
-        foreach (var d in dirs)
-        {
-            Vector2Int n = grid + d;
-            if (stegs.Any(s => s.GridPosition == n)) return true;
-        }
-        return false;
+        return
+            stegGrids.Contains(grid + new Vector2Int(1, 0)) ||
+            stegGrids.Contains(grid + new Vector2Int(-1, 0)) ||
+            stegGrids.Contains(grid + new Vector2Int(0, 1)) ||
+            stegGrids.Contains(grid + new Vector2Int(0, -1));
     }
 
     public static List<Vector2Int> GetStegPositions()
@@ -308,15 +344,24 @@ public class BuildingManager : MonoBehaviour, IOnEventCallback
 
     IEnumerable<Steg> GetStegNeighbors(Steg s)
     {
-        Vector2Int[] dirs = { new Vector2Int(1, 0), new Vector2Int(-1, 0), new Vector2Int(0, 1), new Vector2Int(0, -1) };
-        foreach (var d in dirs)
+        foreach (var d in Neighbors4(s.GridPosition))
         {
-            Vector2Int n = s.GridPosition + d;
-            foreach (var other in stegs)
+            if (stegGrids.Contains(d))
             {
-                if (other.GridPosition == n) yield return other;
+                foreach (var other in stegs)
+                {
+                    if (other.GridPosition == d) yield return other;
+                }
             }
         }
+    }
+
+    private static IEnumerable<Vector2Int> Neighbors4(Vector2Int g)
+    {
+        yield return g + new Vector2Int(1, 0);
+        yield return g + new Vector2Int(-1, 0);
+        yield return g + new Vector2Int(0, 1);
+        yield return g + new Vector2Int(0, -1);
     }
 
     private void OnEnable()
@@ -339,11 +384,26 @@ public class BuildingManager : MonoBehaviour, IOnEventCallback
             int rotationDegrees = data.Length > 2 ? (int)data[2] : 0;
             int occupiedWidth = data.Length > 3 ? (int)data[3] : -1;
             int occupiedHeight = data.Length > 4 ? (int)data[4] : -1;
+            int shipId = data.Length > 5 ? (int)data[5] : 0;
 
             BuildingData bData = GetBuildingDataByName(buildingName);
             if (bData != null)
             {
-                SpawnBuilding(bData, pos, false, rotationDegrees, occupiedWidth, occupiedHeight);
+                SpawnBuilding(bData, pos, false, rotationDegrees, occupiedWidth, occupiedHeight,
+                    shipId > 0 ? shipId : 0);
+
+                // Ressourcen-Nodes unter dem Gebaeude entfernen (war vorher nicht gesynced!)
+                int w = occupiedWidth > 0 ? occupiedWidth : bData.width;
+                int h = occupiedHeight > 0 ? occupiedHeight : bData.height;
+                float startX = -(w - 1) / 2f;
+                float startY = -(h - 1) / 2f;
+                for (int x = 0; x < w; x++)
+                {
+                    for (int y = 0; y < h; y++)
+                    {
+                        IslandManager.RemoveResourceNodeAt(pos + new Vector2(startX + x, startY + y));
+                    }
+                }
             }
         }
     }
@@ -365,9 +425,9 @@ public class BuildingManager : MonoBehaviour, IOnEventCallback
         return null;
     }
 
-    public void SpawnBuilding(BuildingData data, Vector2 position, bool isLocal = true, int rotationDegrees = 0, int occupiedWidthOverride = -1, int occupiedHeightOverride = -1)
+    public BuildingInstance SpawnBuilding(BuildingData data, Vector2 position, bool isLocal = true, int rotationDegrees = 0, int occupiedWidthOverride = -1, int occupiedHeightOverride = -1, int shipId = 0)
     {
-        if (data.prefab == null && !data.isWarehouseType) return;
+        if (data.prefab == null && !data.isWarehouseType) return null;
 
         GameObject building;
         if (data.prefab != null)
@@ -499,6 +559,16 @@ public class BuildingManager : MonoBehaviour, IOnEventCallback
             if (data.buildingName.Contains("Small")) ship.shipLevel = 1;
             else if (data.buildingName.Contains("Medium")) ship.shipLevel = 2;
             else if (data.buildingName.Contains("Large")) ship.shipLevel = 3;
+
+            if (shipId > 0)
+            {
+                ship.AssignNetId(shipId); // ID kommt vom Besitzer (Event 2 / WorldState)
+            }
+            else if (isLocal)
+            {
+                ship.AssignNetId(NetCombat.NextId(NetCombat.LocalActorId)); // Besitzer vergibt selbst
+            }
+
             ship.SyncFromData();
         }
 
@@ -517,14 +587,19 @@ public class BuildingManager : MonoBehaviour, IOnEventCallback
         // Apply red tint to enemy buildings
         if (!isLocal)
         {
+            Color enemyTint = GameUITheme.EnemyTint;
             foreach (Renderer r in building.GetComponentsInChildren<Renderer>())
             {
                 if (r.gameObject.name != "FogMask") // Don't tint the fog mask
-                    r.material.color = new Color(1f, 0.5f, 0.5f, 1f);
+                    r.material.color = enemyTint;
             }
+
+            Ship enemyShip = building.GetComponent<Ship>();
+            if (enemyShip != null) enemyShip.SetBaseColor(enemyTint);
         }
 
         RegisterOccupancy(position, occupiedWidth, occupiedHeight);
+        return instance;
     }
 
     public void SpawnMainWarehouse(Vector2 position, bool isLocal = true)
@@ -576,7 +651,7 @@ public class BuildingManager : MonoBehaviour, IOnEventCallback
 
         if (!isLocal)
         {
-            Color enemyColor = new Color(1f, 0.5f, 0.5f, 1f);
+            Color enemyColor = GameUITheme.EnemyTint;
             rend.material.color = enemyColor;
         }
 

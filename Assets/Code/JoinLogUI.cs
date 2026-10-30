@@ -32,7 +32,7 @@ public class JoinLogUI : MonoBehaviour
 
         if (tmpText != null)
         {
-            tmpText.text = $"<color=#00FF00>[+]</color> {playerName} joined the room";
+            tmpText.text = $"<color={GameUITheme.HtmlGood}>[+]</color> {playerName} joined the room";
         }
 
         // Manage queue limits

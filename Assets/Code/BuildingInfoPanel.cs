@@ -15,15 +15,14 @@ public class BuildingInfoPanel : MonoBehaviour
 {
     public static BuildingInfoPanel Instance;
 
-    // ── Farben (zur Player_UI passend) ──────────────────────────────────────
-    private readonly Color bgColor     = new Color(0.10f, 0.06f, 0.02f, 0.97f);
-    private readonly Color headerColor = new Color(0.15f, 0.09f, 0.03f, 1.00f);
-    private readonly Color borderColor = new Color(0.72f, 0.52f, 0.18f, 1.00f);
-    private readonly Color labelColor  = new Color(0.90f, 0.78f, 0.52f, 0.85f);
-    private readonly Color valueColor  = new Color(1.00f, 0.95f, 0.75f, 1.00f);
-    private readonly Color btnDanger   = new Color(0.65f, 0.10f, 0.08f, 1.00f);
-    private readonly Color btnNeutral  = new Color(0.25f, 0.42f, 0.18f, 1.00f);
-    private readonly Color btnWarning  = new Color(0.55f, 0.40f, 0.06f, 1.00f);
+    // ── Farben (zentrale Palette: GameUITheme) ─────────────────────────────
+    private readonly Color bgColor     = GameUITheme.PanelBackground;
+    private readonly Color borderColor = GameUITheme.OutlineGold;
+    private readonly Color labelColor  = GameUITheme.LabelParchment;
+    private readonly Color valueColor  = GameUITheme.LabelPrimary;
+    private readonly Color btnDanger   = GameUITheme.ButtonDanger;
+    private readonly Color btnNeutral  = GameUITheme.ButtonConfirm;
+    private readonly Color btnWarning  = GameUITheme.ButtonWarning;
 
     // ── Panel-Objekte ────────────────────────────────────────────────────────
     private GameObject panelRoot;
@@ -77,6 +76,7 @@ public class BuildingInfoPanel : MonoBehaviour
     // ── Update-Rate ──────────────────────────────────────────────────────────
     private float refreshTimer = 0f;
     private const float RefreshInterval = 0.5f;
+    private float progressTimer = 0f;
 
     // ────────────────────────────────────────────────────────────────────────
     private void Awake()
@@ -126,8 +126,13 @@ public class BuildingInfoPanel : MonoBehaviour
                 RefreshStats();
             }
 
-            // Progress-Balken kontinuierlich füllen
-            UpdateProgressBar();
+            // Progress-Balken: 10 Hz reicht völlig (war: jedes Frame)
+            progressTimer -= Time.deltaTime;
+            if (progressTimer <= 0f)
+            {
+                progressTimer = 0.1f;
+                UpdateProgressBar();
+            }
         }
 
         // Escape-Taste schließt das Panel über das neue Input System
@@ -192,11 +197,11 @@ public class BuildingInfoPanel : MonoBehaviour
         // Status
         string statusStr;
         if (!currentBuilding.IsConstructed())
-            statusStr = "<color=#FFAA44>⚙ Im Bau...</color>";
+            statusStr = $"<color={GameUITheme.HtmlWarning}>⚙ Im Bau...</color>";
         else if (currentBuilding.IsProductionPaused)
-            statusStr = "<color=#FF6644>⏸ Produktion pausiert</color>";
+            statusStr = $"<color={GameUITheme.HtmlBad}>⏸ Produktion pausiert</color>";
         else
-            statusStr = "<color=#88FF88>✔ Aktiv</color>";
+            statusStr = $"<color={GameUITheme.HtmlGood}>✔ Aktiv</color>";
         txtStatus.text = statusStr;
 
         if (currentBuilding.ProvidesSleep && (d == null || !d.isBarracks))
@@ -228,17 +233,17 @@ public class BuildingInfoPanel : MonoBehaviour
             UpdateButtonToggleState(btnToggleBow, currentBuilding.bowSelected);
 
             // Update Resource Choice Visuals (Radio buttons)
-            UpdateButtonResourceState(btnResWood, currentBuilding.selectedResource == BuildingInstance.BarracksResource.Wood, new Color(0.5f, 0.35f, 0.2f));
+            UpdateButtonResourceState(btnResWood, currentBuilding.selectedResource == BuildingInstance.BarracksResource.Wood, GameUITheme.SlotWood);
             UpdateButtonResourceState(btnResStone, currentBuilding.selectedResource == BuildingInstance.BarracksResource.Stone, Color.gray);
-            UpdateButtonResourceState(btnResGold, currentBuilding.selectedResource == BuildingInstance.BarracksResource.Gold, new Color(0.85f, 0.7f, 0.1f));
-            UpdateButtonResourceState(btnResIron, currentBuilding.selectedResource == BuildingInstance.BarracksResource.Iron, new Color(0.45f, 0.55f, 0.7f));
+            UpdateButtonResourceState(btnResGold, currentBuilding.selectedResource == BuildingInstance.BarracksResource.Gold, GameUITheme.StatusWarning);
+            UpdateButtonResourceState(btnResIron, currentBuilding.selectedResource == BuildingInstance.BarracksResource.Iron, GameUITheme.LabelSecondary);
 
             // Auto Recruit toggle button state
             var autoTxt = btnAutoRecruit.GetComponentInChildren<TextMeshProUGUI>();
             if (currentBuilding.autoRecruit)
             {
                 autoTxt.text = "🤖 Autorekrutierung (20%): AN";
-                btnAutoRecruit.GetComponent<Image>().color = new Color(0.15f, 0.55f, 0.15f);
+                btnAutoRecruit.GetComponent<Image>().color = GameUITheme.StatusGood;
             }
             else
             {
@@ -274,7 +279,7 @@ public class BuildingInfoPanel : MonoBehaviour
             if (qCount > 0)
             {
                 txtQueueStatus.text = $"Warteschlange: <b>{qCount}</b> in Ausbildung... (nächstes: {currentBuilding.currentRecruitingType})";
-                txtQueueStatus.color = new Color(1f, 0.85f, 0.4f);
+                txtQueueStatus.color = GameUITheme.StatusWarning;
             }
             else
             {
@@ -303,7 +308,7 @@ public class BuildingInfoPanel : MonoBehaviour
                 string prodText = $"<b>Produziert:</b>  +{actualProduction} {Capitalize(d.productionResourceId)}";
                 if (actualProduction < d.productionAmount)
                 {
-                    prodText += $" <size=13><color=#FF7777>(-{d.productionAmount - actualProduction} wg. Stimmung)</color></size>";
+                    prodText += $" <size=13><color={GameUITheme.HtmlBad}>(-{d.productionAmount - actualProduction} wg. Stimmung)</color></size>";
                 }
                 prodText += $"\n<b>Intervall:</b> alle {d.productionInterval:F0}s";
                 txtProduces.text = prodText;
@@ -341,17 +346,17 @@ public class BuildingInfoPanel : MonoBehaviour
                 
                 if (currentBuilding.currentSchedule == BuildingInstance.ScheduleMode.Continuous)
                 {
-                    txtSchedule.text = "<b>Arbeitsplan:</b> Nachtarbeit (24/7)\n<color=#FF5555>⚠️ Starker Stress & Erschöpfungsrisiko!</color>";
+                    txtSchedule.text = $"<b>Arbeitsplan:</b> Nachtarbeit (24/7)\n<color={GameUITheme.HtmlBad}>⚠️ Starker Stress & Erschöpfungsrisiko!</color>";
                     txtScheduleBtnLabel.text = "📅 Plan: 24/7";
                 }
                 else if (currentBuilding.currentSchedule == BuildingInstance.ScheduleMode.DayOnly)
                 {
-                    txtSchedule.text = "<b>Arbeitsplan:</b> Regulär (Tag)\n<color=#FFAA44>⚠ Milder Arbeitsstress (Normal)</color>";
+                    txtSchedule.text = $"<b>Arbeitsplan:</b> Regulär (Tag)\n<color={GameUITheme.HtmlWarning}>⚠ Milder Arbeitsstress (Normal)</color>";
                     txtScheduleBtnLabel.text = "📅 Plan: Regulär (Tag)";
                 }
                 else
                 {
-                    txtSchedule.text = "<b>Arbeitsplan:</b> Freizeit-Plan\n<color=#88FF88>✔ +Zufriedenheit (Mittagspause & Freizeit)</color>";
+                    txtSchedule.text = $"<b>Arbeitsplan:</b> Freizeit-Plan\n<color={GameUITheme.HtmlGood}>✔ +Zufriedenheit (Mittagspause & Freizeit)</color>";
                     txtScheduleBtnLabel.text = "📅 Plan: Freizeit";
                 }
             }
@@ -368,7 +373,7 @@ public class BuildingInfoPanel : MonoBehaviour
                 if (currentBuilding.isBuilderHut)
                 {
                     txtHutTypeBtnLabel.text = "🏗️ Typ: Bauarbeiter-Hütte (Kosten: 1 Weizen)";
-                    btnToggleHutType.GetComponent<Image>().color = new Color(0.85f, 0.45f, 0.1f, 1.0f); // orange/gold theme
+                    btnToggleHutType.GetComponent<Image>().color = GameUITheme.ButtonWarning; // orange/gold theme
                 }
                 else
                 {
@@ -439,7 +444,7 @@ public class BuildingInfoPanel : MonoBehaviour
             if (currentBuilding.isBuilderHut)
             {
                 txtHutTypeBtnLabel.text = "🏗️ Typ: Bauarbeiter-Hütte (Kosten: 1 Weizen)";
-                btnToggleHutType.GetComponent<Image>().color = new Color(0.85f, 0.45f, 0.1f, 1.0f);
+                btnToggleHutType.GetComponent<Image>().color = GameUITheme.ButtonWarning;
             }
             else
             {
@@ -478,8 +483,8 @@ public class BuildingInfoPanel : MonoBehaviour
             float progress = currentBuilding.ProductionProgress;
             rtProgressFill.anchorMax = new Vector2(progress, 1f);
 
-            // Reddish color for military recruitment, gold for economic production
-            rtProgressFill.GetComponent<Image>().color = d.isBarracks ? new Color(0.85f, 0.3f, 0.25f, 1f) : new Color(0.85f, 0.65f, 0.25f, 1f);
+            // Reddish color for military recruitment, warning-orange for economic production
+            rtProgressFill.GetComponent<Image>().color = d.isBarracks ? GameUITheme.StatusBad : GameUITheme.StatusWarning;
         }
         else
         {
@@ -514,7 +519,7 @@ public class BuildingInfoPanel : MonoBehaviour
         
         // Schatten / Gold-Outline hinzufügen
         var panelOutline = panelRoot.AddComponent<Outline>();
-        panelOutline.effectColor = new Color(0, 0, 0, 0.6f);
+        panelOutline.effectColor = GameUITheme.ShadowOutline;
         panelOutline.effectDistance = new Vector2(4f, -4f);
 
         // ── Innerer Hintergrund ──────────────────────────────────────────────
@@ -548,13 +553,13 @@ public class BuildingInfoPanel : MonoBehaviour
         AddLE(txtStatus.gameObject, minH: 24f);
 
         // ── Progress Bar (Fortschrittsbalken) ────────────────────────────────
-        goProgressBG = MakeImage("ProgressBarBG", inner.transform, new Color(0.22f, 0.15f, 0.08f, 1f));
+        goProgressBG = MakeImage("ProgressBarBG", inner.transform, GameUITheme.BarBackground);
         AddLE(goProgressBG, minH: 16f);
         var bgOutline = goProgressBG.AddComponent<Outline>();
-        bgOutline.effectColor = new Color(0f, 0f, 0f, 0.5f);
+        bgOutline.effectColor = GameUITheme.ShadowOutline;
         bgOutline.effectDistance = new Vector2(1f, -1f);
 
-        var fillGo = MakeImage("ProgressBarFill", goProgressBG.transform, new Color(0.85f, 0.65f, 0.25f, 1f));
+        var fillGo = MakeImage("ProgressBarFill", goProgressBG.transform, GameUITheme.StatusWarning);
         rtProgressFill = fillGo.GetComponent<RectTransform>();
         rtProgressFill.anchorMin = Vector2.zero;
         rtProgressFill.anchorMax = new Vector2(0f, 1f);
@@ -688,7 +693,7 @@ public class BuildingInfoPanel : MonoBehaviour
             textMesh.text = "⚠️ Weizen fehlt!";
             textMesh.fontSize = 22;
             textMesh.characterSize = 0.07f;
-            textMesh.color = new Color(1f, 0.4f, 0.4f);
+            textMesh.color = GameUITheme.StatusBad;
             textMesh.alignment = TextAlignment.Center;
             textMesh.anchor = TextAnchor.MiddleCenter;
             textGO.AddComponent<BuildingErrorTextMover>();
@@ -742,7 +747,7 @@ public class BuildingInfoPanel : MonoBehaviour
 
     private static void MakeDivider(Transform parent)
     {
-        var div = MakeImage("Divider", parent, new Color(0.72f, 0.52f, 0.18f, 0.35f));
+        var div = MakeImage("Divider", parent, GameUITheme.OutlineGold);
         AddLE(div, minH: 2f);
     }
 
@@ -942,13 +947,13 @@ public class BuildingInfoPanel : MonoBehaviour
         var txt = btn.GetComponentInChildren<TextMeshProUGUI>();
         if (isSelected)
         {
-            img.color = new Color(0.2f, 0.55f, 0.2f, 1f); // bright green
+            img.color = GameUITheme.ButtonConfirm;
             if (txt != null) txt.color = Color.white;
         }
         else
         {
-            img.color = new Color(0.25f, 0.25f, 0.25f, 1f); // dark gray
-            if (txt != null) txt.color = new Color(0.7f, 0.7f, 0.7f, 1f);
+            img.color = GameUITheme.ButtonPressed;
+            if (txt != null) txt.color = GameUITheme.LabelSecondary;
         }
     }
 
@@ -964,13 +969,13 @@ public class BuildingInfoPanel : MonoBehaviour
             
             var o = btn.GetComponent<Outline>();
             if (o == null) o = btn.gameObject.AddComponent<Outline>();
-            o.effectColor = Color.white;
+            o.effectColor = GameUITheme.OutlineGoldStrong;
             o.effectDistance = new Vector2(2f, -2f);
         }
         else
         {
-            img.color = new Color(0.25f, 0.2f, 0.15f, 1f); // dark brown
-            if (txt != null) txt.color = new Color(0.7f, 0.6f, 0.5f, 1f);
+            img.color = GameUITheme.ButtonPressed; // dunkle Inaktiv-Fläche
+            if (txt != null) txt.color = GameUITheme.LabelPlaceholder;
             
             var o = btn.GetComponent<Outline>();
             if (o != null) Destroy(o);

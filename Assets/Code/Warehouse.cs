@@ -59,12 +59,36 @@ public class Warehouse : MonoBehaviour
     {
         UpdateVisualState();
     }
-    
+
+    private void UpdateVisualState()
+    {
+        if (spriteRenderer == null) return;
+
+        Color target;
+        if (!isLocal)
+        {
+            target = capturedColor;
+        }
+        else
+        {
+            float healthPercent = (float)currentHealth / maxHealth;
+            target = healthPercent < 0.5f
+                ? Color.Lerp(damagedColor, healthyColor, healthPercent * 2)
+                : healthyColor;
+        }
+
+        // Nur schreiben wenn die Farbe sich wirklich ändert (spart Render-Dirty-Flags)
+        if (spriteRenderer.color != target)
+        {
+            spriteRenderer.color = target;
+        }
+    }
+
     private void DetermineIslandAssociation()
     {
         // Find the closest island
         Vector2 warehousePos = transform.position;
-        
+
         // Use the island that contains this warehouse position
         if (IslandManager.IsLand(warehousePos))
         {
@@ -72,33 +96,13 @@ public class Warehouse : MonoBehaviour
             localIslandId = $"island_{islandCenter.x}_{islandCenter.y}";
         }
     }
-    
+
     private void InitializeStorage()
     {
         // Start with some basic resources based on island
         // Resources will be populated by ResourceManager or manually
     }
-    
-    private void UpdateVisualState()
-    {
-        if (spriteRenderer == null) return;
-        
-        float healthPercent = (float)currentHealth / maxHealth;
-        
-        if (!isLocal)
-        {
-            spriteRenderer.color = capturedColor;
-        }
-        else if (healthPercent < 0.5f)
-        {
-            spriteRenderer.color = Color.Lerp(damagedColor, healthyColor, healthPercent * 2);
-        }
-        else
-        {
-            spriteRenderer.color = healthyColor;
-        }
-    }
-    
+
     // ── Resource Management ───────────────────────────────────────────────────
     
     public int GetStoredAmount(string resourceId)
@@ -247,11 +251,16 @@ public class Warehouse : MonoBehaviour
         
         OnCaptured?.Invoke(this);
         
-        // Sync capture to other players
+        // Sync capture to other players (Event 10)
         if (PhotonNetwork.InRoom)
         {
-            // Raise event to sync warehouse capture
-            object[] data = new object[] { gameObject.name, newOwnerPlayerId };
+            object[] data = new object[]
+            {
+                gameObject.name,
+                transform.position.x,
+                transform.position.y,
+                newOwnerPlayerId
+            };
             PhotonNetwork.RaiseEvent(10, data, new RaiseEventOptions { Receivers = ReceiverGroup.Others }, SendOptions.SendReliable);
         }
     }
@@ -298,54 +307,6 @@ public class Warehouse : MonoBehaviour
         if (!isLocal) return;
         
         ship.UnloadToWarehouse(this);
-    }
-    
-    // ── Sync for Multiplayer ──────────────────────────────────────────────────
-    
-    public void OnPhotonSerializeView(PhotonStream stream, PhotonMessageInfo info)
-    {
-        if (stream.IsWriting)
-        {
-            // Send current state
-            stream.SendNext(currentHealth);
-            stream.SendNext(isLocal);
-            stream.SendNext(capturingPlayerId);
-            
-            // Send resource count
-            stream.SendNext(storedResources.Count);
-            foreach (var kvp in storedResources)
-            {
-                stream.SendNext(kvp.Key);
-                stream.SendNext(kvp.Value);
-            }
-        }
-        else
-        {
-            // Receive state
-            currentHealth = (int)stream.ReceiveNext();
-            bool newLocal = (bool)stream.ReceiveNext();
-            capturingPlayerId = (int)stream.ReceiveNext();
-            
-            // Check for ownership change
-            if (isLocal && !newLocal)
-            {
-                Capture(capturingPlayerId);
-            }
-            isLocal = newLocal;
-            
-            // Receive resources
-            storedResources.Clear();
-            int resourceCount = (int)stream.ReceiveNext();
-            for (int i = 0; i < resourceCount; i++)
-            {
-                string key = (string)stream.ReceiveNext();
-                int value = (int)stream.ReceiveNext();
-                storedResources[key] = value;
-            }
-            
-            OnHealthChanged?.Invoke(this);
-            OnResourcesChanged?.Invoke();
-        }
     }
     
     // ── Utility ───────────────────────────────────────────────────────────────

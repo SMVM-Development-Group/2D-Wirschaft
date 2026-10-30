@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using Photon.Pun;
 using UnityEngine;
 
@@ -6,9 +7,22 @@ public class PlayerCombatHealth : MonoBehaviourPun
     public int maxHP = 120;
     public int currentHP = 120;
 
+    // Zentrales Register statt FindObjectsOfType pro Frame
+    public static readonly List<PlayerCombatHealth> All = new List<PlayerCombatHealth>();
+
     private void Awake()
     {
         currentHP = Mathf.Max(1, maxHP);
+    }
+
+    private void OnEnable()
+    {
+        if (!All.Contains(this)) All.Add(this);
+    }
+
+    private void OnDisable()
+    {
+        All.Remove(this);
     }
 
     public bool IsHostileTo(bool localBuilding)

@@ -116,10 +116,10 @@ public class NotificationManager : MonoBehaviour
         itemGO.transform.SetParent(panel, false);
 
         Image itemBg = itemGO.GetComponent<Image>();
-        itemBg.color = new Color(0.20f, 0.14f, 0.07f, 0.94f);
+        itemBg.color = GameUITheme.PanelBackground;
 
         Outline itemOutline = itemGO.AddComponent<Outline>();
-        itemOutline.effectColor = new Color(0.95f, 0.86f, 0.56f, 0.65f);
+        itemOutline.effectColor = GameUITheme.OutlineGoldStrong;
         itemOutline.effectDistance = new Vector2(1f, -1f);
 
         LayoutElement le = itemGO.AddComponent<LayoutElement>();
@@ -137,7 +137,7 @@ public class NotificationManager : MonoBehaviour
         TextMeshProUGUI tmp = textGO.GetComponent<TextMeshProUGUI>();
         tmp.text = message;
         tmp.fontSize = 18f;
-        tmp.color = new Color(1f, 0.95f, 0.78f, 1f);
+        tmp.color = GameUITheme.LabelParchment;
         tmp.alignment = TextAlignmentOptions.MidlineLeft;
         tmp.textWrappingMode = TextWrappingModes.Normal;
 

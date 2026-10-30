@@ -1,6 +1,7 @@
 using UnityEngine;
 using System.Collections;
 using System.Collections.Generic;
+using Photon.Pun;
 
 public class Villager : MonoBehaviour
 {
@@ -25,6 +26,43 @@ public class Villager : MonoBehaviour
     public bool isOperatingWorker = false;
     [HideInInspector]
     public float stamina = 100f;
+
+    // ── Netzwerk ─────────────────────────────────────────────────────────
+    [HideInInspector] public int villagerId;          // 0 = noch nicht vergeben (Besitzer steckt in der ID)
+    [HideInInspector] public int ownerActorNumber;
+    /// <summary>Nur der Besitzer simuliert KI/Mood/Zufall. Remote-Villager sind nur Positions-Proxys.</summary>
+    [HideInInspector] public bool isSimulated = true;
+
+    private Vector2 netTargetPosition;
+    private bool netHasTarget;
+    private bool visibleToNetwork = true;
+
+    /// <summary>Stabile netzwerkweite ID. Wird für lokale Villager faul vergeben (Besitzer = actor*1M+n).</summary>
+    public int VillagerNetworkId
+    {
+        get
+        {
+            if (villagerId == 0 && isLocal)
+            {
+                villagerId = NetCombat.NextId(ownerActorNumber > 0 ? ownerActorNumber : NetCombat.LocalActorId);
+            }
+            return villagerId;
+        }
+    }
+
+    /// <summary>Gibt an, ob der Villager sichtbar ist (Schlafen im Haus = unsichtbar) – für den Netzwerk-Snapshot.</summary>
+    public bool IsVisibleToNetwork => visibleToNetwork;
+
+    /// <summary>Empfangene Netzwerk-Position anwenden (nur für Remote-Villager).</summary>
+    public void ApplyNetworkState(float x, float y, bool visible, Villager.Role netRole)
+    {
+        role = netRole;
+        netTargetPosition = new Vector2(x, y);
+        netHasTarget = true;
+        SetVisibility(visible);
+        // Role-Farbe ohne Simulation übernehmen
+        ApplyRoleColor();
+    }
     [HideInInspector]
     public float mood = 80f; // Villager Mood: starts at 80%
     private float workActionCooldown = 0f;
@@ -39,12 +77,28 @@ public class Villager : MonoBehaviour
         
         // Ensure they are visible and on top
         if (sr != null) sr.sortingOrder = 20;
-        
+
+        if (!isSimulated || !isLocal)
+        {
+            // Remote-Proxy: keine Zufalls-KI, keine Pfadsuche.
+            // Gespeicherte Sichtbarkeit aus dem Netz-Snapshot anwenden (nicht überschreiben!).
+            if (sr != null) sr.enabled = visibleToNetwork;
+            else if (rend != null) rend.enabled = visibleToNetwork;
+            return;
+        }
+
         Wander();
     }
 
     private void Update()
     {
+        // Remote-Villager: nur interpolieren, sonst NICHTS (Zufall/KI/Authentizität bleibt beim Besitzer)
+        if (!isSimulated)
+        {
+            UpdateRemoteProxy();
+            return;
+        }
+
         // Erhöhte Sterberate für alle bei schlechtem Mood
         if (VillagerManager.Instance != null)
         {
@@ -428,12 +482,14 @@ public class Villager : MonoBehaviour
 
     private BuildingInstance FindNearestOpportunity()
     {
-        BuildingInstance[] hubs = FindObjectsByType<BuildingInstance>();
         BuildingInstance nearest = null;
         float minDist = float.MaxValue;
 
-        foreach (var h in hubs)
+        for (int i = 0; i < BuildingInstance.AllBuildings.Count; i++)
         {
+            BuildingInstance h = BuildingInstance.AllBuildings[i];
+            if (h == null) continue;
+
             if (h.IsConstructed() && (h.data.isWorkerHub || h.data.isBarracks))
             {
                 float d = Vector2.Distance(transform.position, h.transform.position);
@@ -498,7 +554,10 @@ public class Villager : MonoBehaviour
         
         if (current < max)
         {
-            Debug.Log($"[Villager] Promoting to Soldier. Type: {(SoldierType)Random.Range(0, 4)}");
+            // Zufall NUR hier,wo der Besitzer simuliert (Authority-Prinzip)
+            SoldierType sType = (SoldierType)Random.Range(0, 4);
+            WeaponMaterial sMaterial = (WeaponMaterial)Random.Range(0, 4);
+            Debug.Log($"[Villager] Promoting to Soldier. Type: {sType}, Material: {sMaterial}");
             Player_UI.Instance.AddResource("soldaten", 1);
             Player_UI.Instance.AddResource("dorfbewohner", -1);
             
@@ -507,18 +566,14 @@ public class Villager : MonoBehaviour
                 VillagerManager.Instance.NotifyVillagerConverted(this);
             }
 
-            // Transform into Soldier
-            transform.rotation = Quaternion.identity; // Reset rotation!
-            SetVisibility(true); // Ensure visible!
-            Soldier s = gameObject.AddComponent<Soldier>();
-            s.soldierType = (SoldierType)Random.Range(0, 4);
-            s.team = Team.Player;
-            if (Photon.Pun.PhotonNetwork.LocalPlayer != null)
-            {
-                s.ownerActorNumber = Photon.Pun.PhotonNetwork.LocalPlayer.ActorNumber;
-            }
-            
-            Destroy(this); // Remove Villager script
+            int owner = PhotonNetwork.InRoom && PhotonNetwork.LocalPlayer != null
+                ? PhotonNetwork.LocalPlayer.ActorNumber
+                : NetCombat.LocalActorId;
+
+            // Transform into Soldier — zentral über NetCombat (spawnt selbst + broadcastet Event 12)
+            Vector3 spawnPos = transform.position;
+            Destroy(gameObject);
+            NetCombat.SpawnSoldier(sType, sMaterial, spawnPos, owner, true);
         }
         else
         {
@@ -565,8 +620,26 @@ public class Villager : MonoBehaviour
 
     private void SetVisibility(bool visible)
     {
+        visibleToNetwork = visible;
         if (sr != null) sr.enabled = visible;
         else if (rend != null) rend.enabled = visible;
+    }
+
+    /// <summary>Remote-Interpolation: sanft zur letzten Netzwerk-Position bewegen.</summary>
+    private void UpdateRemoteProxy()
+    {
+        if (!netHasTarget) return;
+        Vector2 current = transform.position;
+        Vector2 next = Vector2.MoveTowards(current, netTargetPosition, moveSpeed * Time.deltaTime);
+        transform.position = new Vector3(next.x, next.y, transform.position.z);
+    }
+
+    /// <summary>Rolle konsistent einfärben (auch für Remote-Proxy ohne Simulation).</summary>
+    private void ApplyRoleColor()
+    {
+        Color c = (role == Role.Worker) ? Color.orange : Color.white;
+        if (sr != null) sr.color = c;
+        else if (rend != null) rend.material.color = c;
     }
 
     public struct MoodRateSnapshot
@@ -703,12 +776,14 @@ public class Villager : MonoBehaviour
             return assignedSleepHouse;
         }
 
-        BuildingInstance[] buildings = FindObjectsByType<BuildingInstance>();
         BuildingInstance nearestHouse = null;
         float minDist = float.MaxValue;
 
-        foreach (var b in buildings)
+        for (int i = 0; i < BuildingInstance.AllBuildings.Count; i++)
         {
+            BuildingInstance b = BuildingInstance.AllBuildings[i];
+            if (b == null) continue;
+
             if (!b.ProvidesSleep || !b.IsConstructed() || !b.HasFreeSleepSlot(this))
             {
                 continue;
