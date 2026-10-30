@@ -1,4 +1,4 @@
-﻿// --------------------------------------------------------------------------------------------------------------------
+// --------------------------------------------------------------------------------------------------------------------
 // <copyright file="EventSystemSpawner.cs" company="Exit Games GmbH">
 // </copyright>
 // <summary>
@@ -28,9 +28,9 @@ namespace Photon.Pun.UtilityScripts
             #endif
 
             #if UNITY_6000_0_OR_NEWER
-            EventSystem sceneEventSystem = FindFirstObjectByType<EventSystem>();
+            EventSystem sceneEventSystem = FindAnyObjectByType<EventSystem>();
             #else
-            EventSystem sceneEventSystem = FindObjectOfType<EventSystem>();
+            EventSystem sceneEventSystem = FindAnyObjectByType<EventSystem>();
             #endif
             if (sceneEventSystem == null)
             {
@@ -42,3 +42,4 @@ namespace Photon.Pun.UtilityScripts
         }
     }
 }
+

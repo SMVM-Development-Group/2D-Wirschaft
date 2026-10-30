@@ -551,7 +551,7 @@ public class Soldier : MonoBehaviour
     /// <summary>Finde feindliche Gebäude in Reichweite.</summary>
     private BuildingInstance FindEnemyBuildingInRange(float range)
     {
-        BuildingInstance[] buildings = FindObjectsOfType<BuildingInstance>();
+        BuildingInstance[] buildings = FindObjectsByType<BuildingInstance>();
         BuildingInstance closest = null;
         float closestDist = float.MaxValue;
 
@@ -947,3 +947,5 @@ public class Soldier : MonoBehaviour
         Gizmos.DrawWireSphere(transform.position, attackRange);
     }
 }
+
+

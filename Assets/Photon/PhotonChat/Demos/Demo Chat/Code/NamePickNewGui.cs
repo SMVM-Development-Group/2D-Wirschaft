@@ -1,4 +1,4 @@
-﻿using UnityEngine;
+using UnityEngine;
 using UnityEngine.UI;
 
 
@@ -50,12 +50,13 @@ namespace Photon.Chat.DemoChat
         public bool InitChatNewComponent()
         {
             #if UNITY_6000_0_OR_NEWER
-            this.chatNewComponent = GameObject.FindFirstObjectByType<ChatNewGui>();
+            this.chatNewComponent = GameObject.FindAnyObjectByType<ChatNewGui>();
             #else
-            this.chatNewComponent = FindObjectOfType<ChatNewGui>();
+            this.chatNewComponent = FindAnyObjectByType<ChatNewGui>();
             #endif
 
             return this.chatNewComponent != null;
         }
     }
 }
+

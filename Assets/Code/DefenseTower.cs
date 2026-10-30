@@ -36,13 +36,13 @@ public class DefenseTower : MonoBehaviour
         Transform closestTarget = null;
         float closestDistance = float.MaxValue;
 
-        foreach (Ship ship in FindObjectsOfType<Ship>())
+        foreach (Ship ship in FindObjectsByType<Ship>())
         {
             if (ship == null || !ship.gameObject.activeInHierarchy || ship.isLocal == building.isLocal) continue;
             TryPickClosest(ship.transform, range, ref closestTarget, ref closestDistance);
         }
 
-        foreach (PlayerCombatHealth player in FindObjectsOfType<PlayerCombatHealth>())
+        foreach (PlayerCombatHealth player in FindObjectsByType<PlayerCombatHealth>())
         {
             if (player == null || !player.gameObject.activeInHierarchy || !player.IsHostileTo(building.isLocal)) continue;
             TryPickClosest(player.transform, range, ref closestTarget, ref closestDistance);
@@ -158,3 +158,5 @@ public class DefenseTower : MonoBehaviour
         }
     }
 }
+
+

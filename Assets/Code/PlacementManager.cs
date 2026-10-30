@@ -228,7 +228,7 @@ private bool CheckIslandOwnership(Vector2 center, int occupiedWidth = 0, int occ
         Vector2Int gridPos = new Vector2Int(Mathf.RoundToInt(center.x), Mathf.RoundToInt(center.y));
         
         // Finde die nächste eigene Insel (Lagerhaus oder Lagerhaus-Typ Gebäude)
-        foreach (var wh in FindObjectsOfType<Warehouse>())
+        foreach (var wh in FindObjectsByType<Warehouse>())
         {
             if (wh != null && wh.isLocal)
             {
@@ -242,7 +242,7 @@ private bool CheckIslandOwnership(Vector2 center, int occupiedWidth = 0, int occ
         }
 
         // Auch Lagerhaus-Typ Gebäude als Ankerpunkte
-        foreach (var bi in FindObjectsOfType<BuildingInstance>())
+        foreach (var bi in FindObjectsByType<BuildingInstance>())
         {
             if (bi != null && bi.isLocal && bi.data != null && bi.data.isWarehouseType)
             {
@@ -280,7 +280,7 @@ private bool CheckIslandOwnership(Vector2 center, int occupiedWidth = 0, int occ
         HashSet<Vector2Int> validStegPositions = new HashSet<Vector2Int>();
         
         // Sammle lokale Lagerhaus-Positionen
-        Warehouse[] warehouses = Object.FindObjectsOfType<Warehouse>();
+        Warehouse[] warehouses = Object.FindObjectsByType<Warehouse>();
         List<Vector2Int> localWarehousePositions = new List<Vector2Int>();
         foreach (var wh in warehouses)
         {
@@ -398,7 +398,7 @@ private bool CheckIslandOwnership(Vector2 center, int occupiedWidth = 0, int occ
 
     private bool IsWarehouseOnIsland(Vector2Int islandPos)
     {
-        foreach (var wh in FindObjectsOfType<Warehouse>())
+        foreach (var wh in FindObjectsByType<Warehouse>())
         {
             if (wh != null && wh.isLocal)
             {
@@ -410,7 +410,7 @@ private bool CheckIslandOwnership(Vector2 center, int occupiedWidth = 0, int occ
                     return true;
             }
         }
-        foreach (var bi in FindObjectsOfType<BuildingInstance>())
+        foreach (var bi in FindObjectsByType<BuildingInstance>())
         {
             if (bi != null && bi.isLocal && bi.data != null && bi.data.isWarehouseType)
             {
@@ -427,7 +427,7 @@ private bool CheckIslandOwnership(Vector2 center, int occupiedWidth = 0, int occ
 
     private bool HasWorkerOnIsland(Vector2 center)
     {
-        Villager[] villagers = FindObjectsOfType<Villager>();
+        Villager[] villagers = FindObjectsByType<Villager>();
         Vector2Int centerGrid = new Vector2Int(Mathf.RoundToInt(center.x), Mathf.RoundToInt(center.y));
         Vector2Int[] directions = { Vector2Int.up, Vector2Int.down, Vector2Int.left, Vector2Int.right };
 
@@ -610,7 +610,7 @@ private bool ValidateShipPlacement(Vector2 center, int rotationDegrees, int occu
         Vector2Int[] directions = { Vector2Int.up, Vector2Int.down, Vector2Int.left, Vector2Int.right };
         
         // Sammle alle gültigen Steg-Positionen (zu Inseln mit Lagerhaus gehörend)
-        Warehouse[] warehouses = Object.FindObjectsOfType<Warehouse>();
+        Warehouse[] warehouses = Object.FindObjectsByType<Warehouse>();
         List<Vector2Int> localWarehousePositions = new List<Vector2Int>();
         foreach (var wh in warehouses)
         {
@@ -771,7 +771,7 @@ private List<ShipPlacementCandidate> GetShipCandidates(Vector3 worldPos)
         Vector2Int[] outwardOptions = new Vector2Int[] { Vector2Int.up, Vector2Int.down, Vector2Int.left, Vector2Int.right };
 
         // Sammle gültige Steg-Positionen (zu Inseln mit Lagerhaus)
-        Warehouse[] warehouses = Object.FindObjectsOfType<Warehouse>();
+        Warehouse[] warehouses = Object.FindObjectsByType<Warehouse>();
         List<Vector2Int> localWarehousePositions = new List<Vector2Int>();
         foreach (var wh in warehouses)
         {
@@ -1164,3 +1164,5 @@ private List<ShipPlacementCandidate> GetShipCandidates(Vector3 worldPos)
         return 0;
     }
 }
+
+

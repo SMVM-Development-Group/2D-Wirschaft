@@ -684,11 +684,11 @@ public class BuildingInstance : MonoBehaviour
         if (isLocal && data != null && (data.isWarehouseType || data.canBuildOnOtherIslands))
         {
             bool anyLeft = false;
-            foreach (var wh in FindObjectsOfType<Warehouse>())
+            foreach (var wh in FindObjectsByType<Warehouse>())
                 if (wh != null && wh.isLocal) { anyLeft = true; break; }
             if (!anyLeft)
             {
-                foreach (var bi in FindObjectsOfType<BuildingInstance>())
+                foreach (var bi in FindObjectsByType<BuildingInstance>())
                     if (bi != null && bi.isLocal && bi.data != null && bi.data.isWarehouseType) { anyLeft = true; break; }
             }
             if (!anyLeft)
@@ -1030,3 +1030,5 @@ public class BuildingInstance : MonoBehaviour
         operatingWorkers.Clear();
     }
 }
+
+

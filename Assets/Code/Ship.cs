@@ -395,7 +395,7 @@ public class Ship : MonoBehaviour
     private void SelectShip()
     {
         // Deselect all other ships first
-        Ship[] allShips = FindObjectsOfType<Ship>();
+        Ship[] allShips = FindObjectsByType<Ship>();
         foreach (Ship s in allShips)
         {
             s.isSelected = false;
@@ -409,7 +409,7 @@ public class Ship : MonoBehaviour
         ShipCargoUI cargoUI = ShipCargoUI.Instance;
         if (cargoUI == null)
         {
-            cargoUI = FindObjectOfType<ShipCargoUI>();
+            cargoUI = FindAnyObjectByType<ShipCargoUI>();
         }
         if (cargoUI == null)
         {
@@ -627,7 +627,7 @@ public class Ship : MonoBehaviour
 
     private Soldier FindNearestSoldier(SoldierType type)
     {
-        Soldier[] allSoldiers = FindObjectsByType<Soldier>(FindObjectsSortMode.None);
+        Soldier[] allSoldiers = FindObjectsByType<Soldier>();
         Soldier best = null;
         float bestDist = float.MaxValue;
 
@@ -765,7 +765,7 @@ public class Ship : MonoBehaviour
 
     private Warehouse FindNearestLocalWarehouse()
     {
-        Warehouse[] whs = FindObjectsOfType<Warehouse>();
+        Warehouse[] whs = FindObjectsByType<Warehouse>();
         Warehouse nearest = null;
         float minDist = float.MaxValue;
         foreach (var wh in whs)
@@ -803,3 +803,5 @@ public class Ship : MonoBehaviour
         ReleaseCrew();
     }
 }
+
+

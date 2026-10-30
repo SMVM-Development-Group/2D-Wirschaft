@@ -765,7 +765,7 @@ public class LobbyManager : MonoBehaviourPunCallbacks, IOnEventCallback
     private void ShowLoadingOverlay()
     {
         GameObject overlay = new GameObject("LoadingOverlay", typeof(RectTransform), typeof(Image));
-        Canvas canvas = FindObjectOfType<Canvas>();
+        Canvas canvas = FindAnyObjectByType<Canvas>();
         if (canvas != null)
         {
             overlay.transform.SetParent(canvas.transform, false);
@@ -962,3 +962,4 @@ public class LobbyManager : MonoBehaviourPunCallbacks, IOnEventCallback
         rt.offsetMax = Vector2.zero;
     }
 }
+

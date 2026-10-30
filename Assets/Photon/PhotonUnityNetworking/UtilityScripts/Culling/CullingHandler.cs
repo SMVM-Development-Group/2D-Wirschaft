@@ -1,4 +1,4 @@
-﻿// --------------------------------------------------------------------------------------------------------------------
+// --------------------------------------------------------------------------------------------------------------------
 // <copyright file="CullingHandler.cs" company="Exit Games GmbH">
 //   Part of: Photon Unity Utilities,
 // </copyright>
@@ -66,9 +66,9 @@ namespace Photon.Pun.UtilityScripts
             if (this.cullArea == null)
             {
                 #if UNITY_6000_0_OR_NEWER
-                this.cullArea = FindFirstObjectByType<CullArea>();
+                this.cullArea = FindAnyObjectByType<CullArea>();
                 #else
-                this.cullArea = FindObjectOfType<CullArea>();
+                this.cullArea = FindAnyObjectByType<CullArea>();
                 #endif
             }
 
@@ -256,3 +256,4 @@ namespace Photon.Pun.UtilityScripts
         #endregion
     }
 }
+

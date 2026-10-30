@@ -86,7 +86,7 @@ public class GameManager : MonoBehaviourPunCallbacks, IOnEventCallback
 
     private void EnsureManagerExists<T>() where T : MonoBehaviour
     {
-        if (FindObjectOfType<T>() == null)
+        if (FindAnyObjectByType<T>() == null)
         {
             GameObject obj = new GameObject(typeof(T).Name);
             obj.AddComponent<T>();
@@ -248,7 +248,7 @@ public class GameManager : MonoBehaviourPunCallbacks, IOnEventCallback
 
     private void BuildGameChatUI()
     {
-        Canvas canvas = FindFirstObjectByType<Canvas>();
+        Canvas canvas = FindAnyObjectByType<Canvas>();
         if (canvas == null) return;
 
         canvas.renderMode = RenderMode.ScreenSpaceOverlay;
@@ -528,7 +528,7 @@ public class GameManager : MonoBehaviourPunCallbacks, IOnEventCallback
         float posY = (float)data[3];
         float rot = (float)data[4];
 
-        Ship[] ships = FindObjectsByType<Ship>(FindObjectsSortMode.None);
+        Ship[] ships = FindObjectsByType<Ship>();
         Vector2Int searchOrigin = new Vector2Int(Mathf.RoundToInt(spawnX), Mathf.RoundToInt(spawnY));
         foreach (Ship ship in ships)
         {
@@ -565,7 +565,7 @@ public class GameManager : MonoBehaviourPunCallbacks, IOnEventCallback
         int amount = (int)data[3];
         Vector3 bPos = new Vector3(bx, by, -0.21f);
 
-        var allBuildings = FindObjectsByType<BuildingInstance>(FindObjectsSortMode.None);
+        var allBuildings = FindObjectsByType<BuildingInstance>();
         foreach (var b in allBuildings)
         {
             if (b == null) continue;
@@ -585,7 +585,7 @@ public class GameManager : MonoBehaviourPunCallbacks, IOnEventCallback
         float by = (float)data[2];
         Vector3 bPos = new Vector3(bx, by, -0.21f);
 
-        var allBuildings = FindObjectsByType<BuildingInstance>(FindObjectsSortMode.None);
+        var allBuildings = FindObjectsByType<BuildingInstance>();
         BuildingInstance wb = null;
         foreach (var b in allBuildings)
         {
@@ -865,7 +865,7 @@ public class GameManager : MonoBehaviourPunCallbacks, IOnEventCallback
     private void SpawnInitialSoldiers()
     {
         Vector3 spawnPos;
-        Warehouse wh = FindObjectOfType<Warehouse>();
+        Warehouse wh = FindAnyObjectByType<Warehouse>();
         if (wh != null)
         {
             spawnPos = wh.transform.position + new Vector3(2f, 0f, 0f);
@@ -940,7 +940,7 @@ public class GameManager : MonoBehaviourPunCallbacks, IOnEventCallback
 
         // 1. Buildings (excluding MyWarehouse, EnemyWarehouse)
         List<object> buildingsList = new List<object>();
-        BuildingInstance[] allBuildings = FindObjectsOfType<BuildingInstance>();
+        BuildingInstance[] allBuildings = FindObjectsByType<BuildingInstance>();
         foreach (var b in allBuildings)
         {
             if (b == null) continue;
@@ -958,7 +958,7 @@ public class GameManager : MonoBehaviourPunCallbacks, IOnEventCallback
 
         // 2. Stegs (that do not have a BuildingInstance on the same gameobject)
         List<object> stegsList = new List<object>();
-        Steg[] allStegs = FindObjectsOfType<Steg>();
+        Steg[] allStegs = FindObjectsByType<Steg>();
         foreach (var s in allStegs)
         {
             if (s == null) continue;
@@ -971,7 +971,7 @@ public class GameManager : MonoBehaviourPunCallbacks, IOnEventCallback
 
         // 3. Villagers
         List<object> villagersList = new List<object>();
-        Villager[] allVillagers = FindObjectsOfType<Villager>();
+        Villager[] allVillagers = FindObjectsByType<Villager>();
         foreach (var v in allVillagers)
         {
             if (v == null) continue;
@@ -1071,3 +1071,7 @@ public class GameManager : MonoBehaviourPunCallbacks, IOnEventCallback
         Debug.Log("[GameManager] World state spawned successfully.");
     }
 }
+
+
+
+

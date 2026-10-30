@@ -74,7 +74,7 @@ public class TradingUI : MonoBehaviour
 
     private void BuildUI()
     {
-        Canvas canvas = FindFirstObjectByType<Canvas>();
+        Canvas canvas = FindAnyObjectByType<Canvas>();
         if (canvas == null) return;
 
         // --- Main Panel Wrapper ---
@@ -699,3 +699,4 @@ public class TradingUI : MonoBehaviour
         }
     }
 }
+

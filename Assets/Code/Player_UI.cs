@@ -91,7 +91,6 @@ public class Player_UI : MonoBehaviour
     [SerializeField] private Color labelColor  = new Color(0.90f, 0.78f, 0.52f, 0.85f);   // Pergament-Beige
     [SerializeField] private Color valueColor  = new Color(1.00f, 0.95f, 0.75f, 1.00f);   // helles Cremegold
     [SerializeField] private float barHeight   = 58f;      // größer
-    [SerializeField] private float slotPadding = 4f;
     [SerializeField] private float iconSize    = 34f;      // größere Icons
     [SerializeField] private float borderWidth = 2f;
     [SerializeField] private float slotWidth   = 80f;      // breitere Slots
@@ -1127,7 +1126,7 @@ public class Player_UI : MonoBehaviour
         int totalBuildings = 0;
         int workingBuildings = 0;
         
-        var buildings = FindObjectsOfType<BuildingInstance>();
+        var buildings = FindObjectsByType<BuildingInstance>();
         foreach (var b in buildings)
         {
             if (b.isLocal && b.IsConstructed())
@@ -1941,3 +1940,5 @@ public class ResourceTooltipTrigger : MonoBehaviour, IPointerEnterHandler, IPoin
         }
     }
 }
+
+
