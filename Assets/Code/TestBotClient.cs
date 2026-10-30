@@ -590,6 +590,9 @@ public class TestBotClient : MonoBehaviour
             Debug.Log("[TestBot] Mit Master Server verbunden. Trete Raum bei...");
             bot.statusLine = "Bot: Master OK, trete Raum bei...";
 
+            // Nickname setzen, damit der Bot im Room-Log sichtbar ist (Player.NickName wird beim Join gesendet)
+            bot.client.NickName = TestBotClient.BotNickName;
+
             var enterParams = new EnterRoomParams
             {
                 RoomName = PhotonNetwork.CurrentRoom.Name,

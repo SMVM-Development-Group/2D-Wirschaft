@@ -348,7 +348,7 @@ public class ShipCargoUI : MonoBehaviour
             else if (slot.content == ShipSlot.SlotContent.Builder)
             {
                 obj.name = "Builder";
-                label = "👷";
+                label = "Bu";
                 labelColor = GameUITheme.StatusWarning;
                 iconSprite = LoadBuilderSprite();
             }

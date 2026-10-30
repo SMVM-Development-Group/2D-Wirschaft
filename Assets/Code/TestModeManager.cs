@@ -133,14 +133,18 @@ public class TestModeBootstrap : MonoBehaviour
 public class TextMeshProUGUIOverlay
 {
     private readonly TMPro.TextMeshProUGUI text;
+    private readonly GameObject root;
 
-    private TextMeshProUGUIOverlay(TMPro.TextMeshProUGUI text)
+    private TextMeshProUGUIOverlay(TMPro.TextMeshProUGUI text, GameObject root)
     {
         this.text = text;
+        this.root = root;
     }
 
     public static TextMeshProUGUIOverlay Create(Canvas canvas, string name)
     {
+        // Ein GameObject darf nur EINE Graphic-Komponente tragen (Image + TMP = Fehler).
+        // Deshalb: Panel (BG/Outline) auf dem Root, der Text bekommt ein eigenes Kind.
         GameObject go = new GameObject(name);
         go.transform.SetParent(canvas.transform, false);
 
@@ -157,13 +161,21 @@ public class TextMeshProUGUIOverlay
         var outline = go.AddComponent<UnityEngine.UI.Outline>();
         GameUITheme.ApplyOutline(outline, true);
 
-        var tmp = go.AddComponent<TMPro.TextMeshProUGUI>();
+        GameObject textGO = new GameObject(name + "_Text");
+        textGO.transform.SetParent(go.transform, false);
+        var textRect = textGO.AddComponent<RectTransform>();
+        textRect.anchorMin = Vector2.zero;
+        textRect.anchorMax = Vector2.one;
+        textRect.offsetMin = new Vector2(8f, 6f);
+        textRect.offsetMax = new Vector2(-8f, -6f);
+
+        var tmp = textGO.AddComponent<TMPro.TextMeshProUGUI>();
         tmp.fontSize = 14;
         tmp.alignment = TMPro.TextAlignmentOptions.TopLeft;
         tmp.color = GameUITheme.LabelParchment;
         tmp.text = "TEST-MODUS";
 
-        var overlay = new TextMeshProUGUIOverlay(tmp);
+        var overlay = new TextMeshProUGUIOverlay(tmp, go);
         return overlay;
     }
 
@@ -174,6 +186,6 @@ public class TextMeshProUGUIOverlay
 
     public void SetVisible(bool visible)
     {
-        if (text != null && text.gameObject != null) text.gameObject.SetActive(visible);
+        if (root != null) root.SetActive(visible);
     }
 }
