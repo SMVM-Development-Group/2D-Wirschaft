@@ -861,7 +861,7 @@ public class Soldier : MonoBehaviour
         }
     }
 
-    private void MoveTowards(Vector2 targetPos)
+    private bool MoveTowards(Vector2 targetPos)
     {
         Vector2 next = Vector2.MoveTowards(transform.position, targetPos, moveSpeed * Time.deltaTime);
         Vector2Int nextGrid = new Vector2Int(Mathf.RoundToInt(next.x), Mathf.RoundToInt(next.y));
