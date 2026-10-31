@@ -767,15 +767,55 @@ public class BuildingManager : MonoBehaviour, IOnEventCallback
         }
     }
 
+    public static Vector2Int FindNearestWaterCell(Vector2Int from, int maxRadius = 150)
+    {
+        if (!IslandManager.IsLand(from)) return from;
+
+        var queue = new Queue<Vector2Int>();
+        var visited = new HashSet<Vector2Int>();
+        queue.Enqueue(from);
+        visited.Add(from);
+
+        Vector2Int[] dirs = {
+            new Vector2Int(1, 0), new Vector2Int(-1, 0), new Vector2Int(0, 1), new Vector2Int(0, -1),
+            new Vector2Int(1, 1), new Vector2Int(-1, 1), new Vector2Int(1, -1), new Vector2Int(-1, -1)
+        };
+
+        while (queue.Count > 0)
+        {
+            Vector2Int curr = queue.Dequeue();
+            if (Mathf.Abs(curr.x - from.x) > maxRadius || Mathf.Abs(curr.y - from.y) > maxRadius) continue;
+
+            for (int i = 0; i < dirs.Length; i++)
+            {
+                Vector2Int n = curr + dirs[i];
+                if (visited.Add(n))
+                {
+                    if (!IslandManager.IsLand(n))
+                        return n;
+                    queue.Enqueue(n);
+                }
+            }
+        }
+
+        return from;
+    }
+
     public static List<Vector2> FindWaterPath(Vector2 start, Vector2 destination, int maxIterations = 100000)
     {
         Vector2Int startGrid = new Vector2Int(Mathf.RoundToInt(start.x), Mathf.RoundToInt(start.y));
         Vector2Int destGrid = new Vector2Int(Mathf.RoundToInt(destination.x), Mathf.RoundToInt(destination.y));
         var empty = new List<Vector2>();
 
+        if (IslandManager.IsLand(startGrid))
+            startGrid = FindNearestWaterCell(startGrid);
+
+        if (IslandManager.IsLand(destGrid))
+            destGrid = FindNearestWaterCell(destGrid);
+
         if (startGrid == destGrid)
         {
-            empty.Add(destination);
+            empty.Add(new Vector2(destGrid.x, destGrid.y));
             return empty;
         }
 
@@ -784,7 +824,13 @@ public class BuildingManager : MonoBehaviour, IOnEventCallback
         var cameFrom = new Dictionary<Vector2Int, Vector2Int>();
         var costSoFar = new Dictionary<Vector2Int, float> { [startGrid] = 0f };
         var closed = new HashSet<Vector2Int>();
-        Vector2Int[] dirs = { new Vector2Int(1,0), new Vector2Int(-1,0), new Vector2Int(0,1), new Vector2Int(0,-1) };
+
+        Vector2Int[] dirs = {
+            new Vector2Int(1, 0), new Vector2Int(-1, 0), new Vector2Int(0, 1), new Vector2Int(0, -1),
+            new Vector2Int(1, 1), new Vector2Int(-1, 1), new Vector2Int(1, -1), new Vector2Int(-1, -1)
+        };
+        float[] stepCosts = { 1f, 1f, 1f, 1f, 1.4142f, 1.4142f, 1.4142f, 1.4142f };
+
         int limit = MapCellLimit;
         int iterations = 0;
 
@@ -795,27 +841,29 @@ public class BuildingManager : MonoBehaviour, IOnEventCallback
                 return ReconstructWaterPath(cameFrom, destGrid);
             if (!closed.Add(current)) continue;
 
-            foreach (var d in dirs)
+            for (int i = 0; i < dirs.Length; i++)
             {
-                Vector2Int next = current + d;
+                Vector2Int next = current + dirs[i];
                 if (next.x < -limit || next.x > limit || next.y < -limit || next.y > limit) continue;
-                // Schiffe duerfen nicht ueber Land fahren. Der Start zaehlt
-                // nicht: steht das Schiff bereits auf Land, muss es von dort
-                // herausfahren koennen (Ship.MoveTo baut dafuer einen
-                // Landpfad zum naechsten Ufer).
+
+                // Kein Schritt auf Land
                 if (IslandManager.IsLand(next)) continue;
 
-                float newCost = costSoFar[current] + 1f;
+                // Bei Diagonalschritten sicherstellen, dass keine Landecken geschnitten werden
+                if (i >= 4)
+                {
+                    Vector2Int corner1 = new Vector2Int(current.x + dirs[i].x, current.y);
+                    Vector2Int corner2 = new Vector2Int(current.x, current.y + dirs[i].y);
+                    if (IslandManager.IsLand(corner1) || IslandManager.IsLand(corner2)) continue;
+                }
+
+                float newCost = costSoFar[current] + stepCosts[i];
                 if (costSoFar.TryGetValue(next, out float existingCost) && newCost >= existingCost)
                     continue;
 
                 costSoFar[next] = newCost;
                 cameFrom[next] = current;
-                // Leichte Gewichtung der Heuristik: bei gleichem f wird die
-                // Zelle naeher am Ziel zuerst expandiert. Das haelt die Suche
-                // auf langen Wasserwegen klein (statt das ganze Rechteck
-                // zwischen Start und Ziel abzuarbeiten).
-                float heuristic = Manhattan(next, destGrid);
+                float heuristic = OctileDistance(next, destGrid);
                 frontier.Enqueue(next, newCost + heuristic * 1.001f);
             }
         }
@@ -837,9 +885,11 @@ public class BuildingManager : MonoBehaviour, IOnEventCallback
         return path;
     }
 
-    private static float Manhattan(Vector2Int a, Vector2Int b)
+    private static float OctileDistance(Vector2Int a, Vector2Int b)
     {
-        return Mathf.Abs(a.x - b.x) + Mathf.Abs(a.y - b.y);
+        int dx = Mathf.Abs(a.x - b.x);
+        int dy = Mathf.Abs(a.y - b.y);
+        return 1f * (dx + dy) + (1.4142f - 2f) * Mathf.Min(dx, dy);
     }
 
     // ── Island Flood-Fill (für Fog-Enthüllung) ───────────────────────────
