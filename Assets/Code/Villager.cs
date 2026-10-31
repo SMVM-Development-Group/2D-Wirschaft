@@ -82,8 +82,8 @@ public class Villager : MonoBehaviour
         {
             // Remote-Proxy: keine Zufalls-KI, keine Pfadsuche.
             // Gespeicherte Sichtbarkeit aus dem Netz-Snapshot anwenden (nicht überschreiben!).
-            if (sr != null) sr.enabled = visibleToNetwork;
-            else if (rend != null) rend.enabled = visibleToNetwork;
+            // Ueber SetVisibility, damit der Nebel (FogMemory) das letzte Wort behaelt.
+            SetVisibility(visibleToNetwork);
             return;
         }
 
@@ -638,6 +638,17 @@ public class Villager : MonoBehaviour
     private void SetVisibility(bool visible)
     {
         visibleToNetwork = visible;
+
+        // Wenn FogMemory vorhanden ist, entscheidet der Nebel zusaetzlich, ob die
+        // Renderer an sind. Direktes sr.enabled=true wuerde Einheiten im Nebel
+        // wieder aufblitzen lassen (Netzwerk-Snapshots kommen oefter als Fog-Polls).
+        FogMemory fog = GetComponent<FogMemory>();
+        if (fog != null)
+        {
+            fog.SetLogicalVisible(visible);
+            return;
+        }
+
         if (sr != null) sr.enabled = visible;
         else if (rend != null) rend.enabled = visible;
     }

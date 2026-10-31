@@ -149,8 +149,8 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::FogProjector
   fogMaterial: {fileID: 2100000, guid: d64b397c3031af54e9a25ce75818e06c, type: 2}
-  maskResolution: 1024
-  mapSize: 5000
+  maskResolution: 2048
+  mapSize: 0
 --- !u!4 &281465909
 Transform:
   m_ObjectHideFlags: 0

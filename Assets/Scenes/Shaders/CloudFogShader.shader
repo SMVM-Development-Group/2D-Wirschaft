@@ -61,9 +61,11 @@ Shader "Custom/CloudFogShader"
                 float density = colMain.r * colDetail.r * 2.0;
                 density = saturate(density);
                 
-                // Unexplored areas must be completely opaque (alpha = 1.0) so the player cannot see through the fog!
-                // We modulate the color slightly based on density to show gorgeous dynamic cloud shapes.
-                float unexploredAlpha = lerp(0.98, 1.0, density); // Opaque base
+                // Unexplored areas must be COMPLETELY opaque (alpha = 1.0) so the player
+                // cannot see terrain, other islands or units through the fog. Even a
+                // tiny 2% leak becomes clearly visible when zoomed in close.
+                // Only the color is modulated by the cloud density.
+                float unexploredAlpha = 1.0;
                 fixed4 unexploredCol = fixed4(_CloudColor.rgb * (0.85 + 0.15 * density), unexploredAlpha);
                 
                 // Explored-but-invisible shroud: einmal aufgedeckte Gebiete bleiben

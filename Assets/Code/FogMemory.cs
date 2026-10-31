@@ -22,7 +22,10 @@ public class FogMemory : MonoBehaviour
         go.AddComponent<FogMemory>();
     }
 
-    private enum FovState { Unexplored, Memory, Live }
+    // "Unknown" = noch nie gepollt. Wichtig fuer frisch gespawnte Objekte: im
+    // Zustand Unexplored wuerde der Uebergangs-Check das Ausblenden ueberspringen,
+    // dadurch blieben fremde Einheiten im Nebel sichtbar.
+    private enum FovState { Unknown, Unexplored, Memory, Live }
 
     private const float PollInterval = 0.3f;
     private const float GhostRevealCheckInterval = 0.5f;
@@ -31,7 +34,8 @@ public class FogMemory : MonoBehaviour
     [Tooltip("Position, an der die Nebel-Sichtbarkeit geprueft wird. Null = eigene Transform.")]
     public Transform target;
 
-    private FovState state = FovState.Unexplored;
+    private FovState state = FovState.Unknown;
+    private bool logicalVisible = true;
     private Renderer[] sources;
     private readonly List<Ghost> ghosts = new List<Ghost>();
     private Vector3 lastSeenPos;
@@ -150,6 +154,9 @@ public class FogMemory : MonoBehaviour
     private void SetSourcesEnabled(bool on)
     {
         if (sources == null) return;
+        // Logische Sichtbarkeit (z.B. schlafende Bewohner) bleibt immer Vorrang
+        // vor der Nebel-Sichtbarkeit.
+        on &= logicalVisible;
         foreach (Renderer r in sources)
         {
             if (r == null) continue;
@@ -157,11 +164,26 @@ public class FogMemory : MonoBehaviour
         }
     }
 
+    /// <summary>
+    /// Wird von anderen Systemen (z.B. Villager-Netzwerksync) aufgerufen, wenn
+    /// sich die logische Sichtbarkeit aendert. Diese duerfen die Renderer NICHT
+    /// direkt wieder einschalten, sonst blitzen Einheiten im Nebel auf.
+    /// </summary>
+    public void SetLogicalVisible(bool visible)
+    {
+        logicalVisible = visible;
+        if (sources == null || sources.Length == 0) CollectSources();
+        SetSourcesEnabled(state == FovState.Live);
+    }
+
     // ── Ghosts ──────────────────────────────────────────────────────────────
 
     private void CreateGhosts()
     {
         HideGhosts();
+
+        // Unsichtbare (z.B. schlafende) Einheiten sollen kein Gedaechtnis hinterlassen.
+        if (!logicalVisible) return;
 
         // Verschiebung: Das Objekt kann seit dem letzten Live-Poll weitergedriftet
         // sein; der Snapshot soll bei der ZULETZT gesehenen Position stehen.
