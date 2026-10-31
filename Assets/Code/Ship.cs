@@ -536,7 +536,7 @@ public class Ship : MonoBehaviour
             List<Vector2> escape = FindLandEscapePath(transform.position);
             if (escape == null || escape.Count == 0)
             {
-                isMoving = false;
+                StopMovement();
                 NotificationManager.Instance?.Notify("ship_stranded",
                     "Schiff gestrandet! Kein Wasserweg erreichbar.", 5f);
                 return;
@@ -558,7 +558,7 @@ public class Ship : MonoBehaviour
         {
             // Kein Wasserweg: Auf keinen Fall geradeaus fahren (das waere der
             // Weg quer ueber die Insel).
-            isMoving = false;
+            StopMovement();
             NotificationManager.Instance?.Notify("ship_stranded",
                 "Kein Wasserweg zum Ziel!", 5f);
             return;

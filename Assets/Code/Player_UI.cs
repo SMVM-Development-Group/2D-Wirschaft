@@ -482,6 +482,7 @@ public class Player_UI : MonoBehaviour
         BuildSoldierCommandMenu(canvasGO.transform);
         BuildTooltipPanel(canvasGO.transform);
         BuildStatisticsScreen(canvasGO.transform);
+        SchoolModeUI.Install(canvasGO.transform);
     }
 
     private void EnsureSlot(Transform parent, string id, string name, int start, int max)

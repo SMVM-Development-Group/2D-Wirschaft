@@ -346,22 +346,45 @@ public class BuildingManager : MonoBehaviour, IOnEventCallback
         public void Enqueue(Vector2Int node, float priority)
         {
             items.Add((node, priority));
+
+            // Binaerer Min-Heap: die alte lineare Suche war O(n) pro Dequeue
+            // und wurde bei langen Wasserwegen (viele tausend Zellen) extrem
+            // langsam.
+            int index = items.Count - 1;
+            while (index > 0)
+            {
+                int parent = (index - 1) / 2;
+                if (items[parent].priority <= items[index].priority) break;
+                (items[parent], items[index]) = (items[index], items[parent]);
+                index = parent;
+            }
         }
 
         public Vector2Int Dequeue()
         {
-            int bestIndex = 0;
-            float bestPriority = items[0].priority;
-            for (int i = 1; i < items.Count; i++)
+            Vector2Int result = items[0].node;
+            int last = items.Count - 1;
+            items[0] = items[last];
+            items.RemoveAt(last);
+
+            int index = 0;
+            int count = items.Count;
+            while (true)
             {
-                if (items[i].priority < bestPriority)
-                {
-                    bestPriority = items[i].priority;
-                    bestIndex = i;
-                }
+                int left = index * 2 + 1;
+                int right = left + 1;
+                int smallest = index;
+
+                if (left < count && items[left].priority < items[smallest].priority)
+                    smallest = left;
+                if (right < count && items[right].priority < items[smallest].priority)
+                    smallest = right;
+                if (smallest == index) break;
+
+                (items[index], items[smallest]) = (items[smallest], items[index]);
+                index = smallest;
             }
-            Vector2Int result = items[bestIndex].node;
-            items.RemoveAt(bestIndex);
+
             return result;
         }
     }
@@ -788,7 +811,12 @@ public class BuildingManager : MonoBehaviour, IOnEventCallback
 
                 costSoFar[next] = newCost;
                 cameFrom[next] = current;
-                frontier.Enqueue(next, newCost + Manhattan(next, destGrid));
+                // Leichte Gewichtung der Heuristik: bei gleichem f wird die
+                // Zelle naeher am Ziel zuerst expandiert. Das haelt die Suche
+                // auf langen Wasserwegen klein (statt das ganze Rechteck
+                // zwischen Start und Ziel abzuarbeiten).
+                float heuristic = Manhattan(next, destGrid);
+                frontier.Enqueue(next, newCost + heuristic * 1.001f);
             }
         }
 
