@@ -214,6 +214,10 @@ public static class NetCombat
             fr.isLocalPlayer = true;
         }
 
+        // Fog-Gedaechtnis: Soldaten bleiben als ausgegrauter Snapshot an der
+        // zuletzt gesehenen Stelle stehen, sobald sie das Sichtfeld verlassen.
+        FogMemory.Add(solObj);
+
         if (broadcast && PhotonNetwork.InRoom)
         {
             Raise(12, Soldier.SerializeSpawnEvent(s), true); // SoldierSpawnEventCode = 12

@@ -24,7 +24,6 @@ public class Ship : MonoBehaviour
     private Vector3 targetPosition;
     private bool isMoving = false;
     private float movementStartTime;
-    private float targetAngle = 0f;
     private float currentAngle = 0f;
     private List<Vector2> waterPath = new List<Vector2>();
     private int waterPathIndex = 0;
@@ -82,6 +81,10 @@ public class Ship : MonoBehaviour
         currentAngle = transform.rotation.eulerAngles.z;
         lastFogCell = new Vector2Int(Mathf.RoundToInt(transform.position.x), Mathf.RoundToInt(transform.position.y));
         hasFogCell = true;
+
+        // Fog-Gedaechtnis: Schiffe bleiben als ausgegrauter Snapshot stehen, wenn
+        // sie das Sichtfeld verlassen (bewegt sich nicht mehr mit).
+        FogMemory.Add(gameObject);
     }
 
     private void OnEnable()
@@ -300,82 +303,80 @@ public class Ship : MonoBehaviour
     }
 
     // ── Bewegung ─────────────────────────────────────────────────────────
+    private const float WaypointReachedDistance = 0.35f;
+    private float waypointBestDistance = float.MaxValue;
+
     private void HandleMovement()
     {
         if (!isLocal) return; // nur der BESITZER simuliert die Fahrt
 
         if (!isMoving) return;
 
-        if (waterPath.Count == 0)
+        Vector3 target = GetCurrentWaypoint();
+        Vector3 direction = target - transform.position;
+        direction.z = 0f;
+        float distance = direction.magnitude;
+
+        // Wegpunkt erreicht? Zusaetzlich "passiert" erkennen: bei begrenzter
+        // Drehrate kann ein Schiff sonst ewig um einen Punkt kreisen, den es
+        // wegen seines Wendekreises nie exakt erreicht.
+        if (distance <= WaypointReachedDistance ||
+            (distance > waypointBestDistance && distance < 1.5f))
         {
-            MoveDirectTowardsTarget();
+            AdvanceWaypoint();
             return;
         }
-
-        Vector3 target;
-        if (waterPathIndex < waterPath.Count)
-        {
-            target = new Vector3(waterPath[waterPathIndex].x, waterPath[waterPathIndex].y, transform.position.z);
-        }
-        else
-        {
-            target = targetPosition;
-        }
-
-        Vector3 direction = target - transform.position;
-        direction.z = 0;
-
-        if (direction.magnitude < 0.3f)
-        {
-            if (waterPathIndex < waterPath.Count)
-            {
-                waterPathIndex++;
-                return;
-            }
-            else
-            {
-                StopMovement();
-                return;
-            }
-        }
+        waypointBestDistance = Mathf.Min(waypointBestDistance, distance);
 
         if (Time.time - movementStartTime > 2f && IsOnLand())
         {
             StopMovement();
             NotificationManager.Instance?.Notify("ship_stranded",
-                "Schiff gestrandet!", 5f);
+                waterPath.Count > 0 ? "Schiff gestrandet!" : "Schiff gestrandet! Kein Wasserweg.", 5f);
             return;
         }
 
         currentAngle = RotateTowards(direction);
         transform.rotation = Quaternion.Euler(0f, 0f, currentAngle);
-        transform.position += transform.up * moveSpeed * Time.deltaTime;
+
+        // Entlang der Richtung zum Wegpunkt fahren (nicht entlang transform.up):
+        // sonst zieht die begrenzte Drehrate das Schiff in eine Kreisbahn um den
+        // Wegpunkt. Die Drehung ist rein visuell, die Position folgt dem Kurs.
+        float desiredAngle = Mathf.Atan2(direction.y, direction.x) * Mathf.Rad2Deg - 90f;
+        float alignment = Mathf.Clamp01(Mathf.Cos(Mathf.DeltaAngle(currentAngle, desiredAngle) * Mathf.Deg2Rad));
+        float speedFactor = Mathf.Lerp(0.15f, 1f, alignment);
+        float step = Mathf.Min(moveSpeed * speedFactor * Time.deltaTime, distance);
+        transform.position += direction / distance * step;
 
         RevealFogAlongPath();
     }
 
-    private void MoveDirectTowardsTarget()
+    private Vector3 GetCurrentWaypoint()
     {
-        Vector3 direction = targetPosition - transform.position;
-        direction.z = 0;
-
-        if (direction.magnitude < 0.3f)
+        if (waterPathIndex < waterPath.Count)
         {
-            StopMovement();
-            return;
+            Vector2 point = waterPath[waterPathIndex];
+            return new Vector3(point.x, point.y, transform.position.z);
+        }
+        return targetPosition;
+    }
+
+    private void AdvanceWaypoint()
+    {
+        waypointBestDistance = float.MaxValue;
+
+        if (waterPathIndex < waterPath.Count)
+        {
+            waterPathIndex++;
+            if (waterPathIndex < waterPath.Count) return;
         }
 
-        if (Time.time - movementStartTime > 2f && IsOnLand())
-        {
-            StopMovement();
-            NotificationManager.Instance?.Notify("ship_stranded",
-                "Schiff gestrandet! Kein Wasserweg.", 5f);
-            return;
-        }
+        // Letzte Annäherung an den exakten Klickpunkt (kann vom gerundeten
+        // Wegpunkt abweichen).
+        Vector3 end = new Vector3(targetPosition.x, targetPosition.y, transform.position.z);
+        if (Vector2.Distance(transform.position, end) > WaypointReachedDistance) return;
 
-        currentAngle = RotateTowards(direction);
-        transform.rotation = Quaternion.Euler(0f, 0f, currentAngle);
-        transform.position += transform.up * moveSpeed * Time.deltaTime;
+        StopMovement();
     }
 
     private float RotateTowards(Vector3 direction)
@@ -421,9 +422,76 @@ public class Ship : MonoBehaviour
         targetPosition = new Vector3(destination.x, destination.y, transform.position.z);
 
         waterPath = BuildingManager.FindWaterPath(transform.position, destination);
+        waterPath = SmoothWaterPath(transform.position, waterPath);
         waterPathIndex = 0;
+        waypointBestDistance = float.MaxValue;
         movementStartTime = Time.time;
         isMoving = true;
+    }
+
+    /// <summary>
+    /// Entfernt Zickzack-Wegpunkte, wenn eine direkte Wasserlinie frei ist.
+    /// Das Schiff faehrt dadurch ruhige, weitere Boegen statt jede Grid-Zelle
+    /// einzeln anzusteuern (weniger hektisches Drehen).
+    /// </summary>
+    private static List<Vector2> SmoothWaterPath(Vector3 start, List<Vector2> path)
+    {
+        if (path == null || path.Count <= 1) return path ?? new List<Vector2>();
+
+        var smoothed = new List<Vector2>(path.Count);
+        Vector2 anchor = start;
+        int index = 0;
+
+        while (index < path.Count)
+        {
+            int next = index;
+            // Nur begrenzt weit vorausschauen: haelt die Glaettung auch bei
+            // sehr langen Wegen guenstig.
+            int farthest = Mathf.Min(path.Count - 1, index + 40);
+            for (int candidate = farthest; candidate > index; candidate--)
+            {
+                if (HasWaterLineOfSight(anchor, path[candidate]))
+                {
+                    next = candidate;
+                    break;
+                }
+            }
+
+            smoothed.Add(path[next]);
+            anchor = path[next];
+            index = next + 1;
+        }
+
+        return smoothed;
+    }
+
+    private static bool HasWaterLineOfSight(Vector2 from, Vector2 to)
+    {
+        float distance = Vector2.Distance(from, to);
+        if (distance < 0.001f) return true;
+
+        int samples = Mathf.CeilToInt(distance / 0.2f);
+        for (int i = 1; i <= samples; i++)
+        {
+            Vector2 point = Vector2.Lerp(from, to, (float)i / samples);
+            if (TouchesLand(point)) return false;
+        }
+        return true;
+    }
+
+    /// <summary>
+    /// Prueft die Zelle an einem Punkt inklusive angrenzender Zellen an
+    /// Bruchkanten. Verhindert, dass eine geglaettete Linie diagonal ueber
+    /// eine Landecke schneidet.
+    /// </summary>
+    private static bool TouchesLand(Vector2 point)
+    {
+        int x0 = Mathf.FloorToInt(point.x), x1 = Mathf.CeilToInt(point.x);
+        int y0 = Mathf.FloorToInt(point.y), y1 = Mathf.CeilToInt(point.y);
+        return IslandManager.IsLand(new Vector2(x0, y0)) ||
+               IslandManager.IsLand(new Vector2(x0, y1)) ||
+               IslandManager.IsLand(new Vector2(x1, y0)) ||
+               IslandManager.IsLand(new Vector2(x1, y1));
     }
 
     private Vector3 FindNearestWater(Vector3 landPos)

@@ -116,6 +116,10 @@ public class VillagerManager : MonoBehaviour, IOnEventCallback
         fr.radius = 4f;
         fr.isLocalPlayer = isLocal;
 
+        // Fog-Gedaechtnis: bleibt als ausgegrauter "zuletzt gesehen"-Snapshot stehen,
+        // wenn der Bewohner das Sichtfeld verlaesst.
+        FogMemory.Add(vObj);
+
         activeVillagers.Add(v);
     }
 
@@ -165,6 +169,11 @@ public class VillagerManager : MonoBehaviour, IOnEventCallback
 
         remoteVillagers[villagerId] = v;
         remoteMissedSnapshots[villagerId] = 0;
+
+        // Fog-Gedaechtnis: fremde Bewohner ausserhalb des Sichtfelds als grauer
+        // Snapshot einfrieren (bewegt sich dort nicht mehr mit).
+        FogMemory.Add(vObj);
+
         return v;
     }
 
