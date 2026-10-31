@@ -38,31 +38,47 @@ public class BuildingManager : MonoBehaviour, IOnEventCallback
         return HasLandAdjacency(grid) || HasPierAdjacency(grid);
     }
 
-    public static void RegisterOccupancy(Vector2 center, int width, int height)
+    /// <summary>Berechnet die exakten Grid-Zellen eines Footprints (gleiche Logik wie RegisterOccupancy).</summary>
+    public static List<Vector2Int> GetFootprintCells(Vector2 center, int width, int height)
     {
+        List<Vector2Int> cells = new List<Vector2Int>(Mathf.Max(1, width * height));
         float startX = -(width - 1) / 2f;
         float startY = -(height - 1) / 2f;
         for (int x = 0; x < width; x++)
         {
             for (int y = 0; y < height; y++)
             {
-                occupiedBuildingCells.Add(center + new Vector2(startX + x, startY + y));
+                cells.Add(new Vector2Int(
+                    Mathf.FloorToInt(center.x + startX + x + 0.5f),
+                    Mathf.FloorToInt(center.y + startY + y + 0.5f)));
             }
         }
+        return cells;
+    }
+
+    public static void RegisterOccupancy(Vector2 center, int width, int height)
+    {
+        RegisterOccupancyCells(GetFootprintCells(center, width, height));
     }
 
     /// <summary>Gibt die Gebaeudezellen nach Zerstoerung wieder frei (war vorher ein Leak!).</summary>
     public static void FreeOccupancy(Vector2 center, int width, int height)
     {
-        float startX = -(width - 1) / 2f;
-        float startY = -(height - 1) / 2f;
-        for (int x = 0; x < width; x++)
-        {
-            for (int y = 0; y < height; y++)
-            {
-                occupiedBuildingCells.Remove(center + new Vector2(startX + x, startY + y));
-            }
-        }
+        FreeOccupancyCells(GetFootprintCells(center, width, height));
+    }
+
+    public static void RegisterOccupancyCells(IEnumerable<Vector2Int> cells)
+    {
+        if (cells == null) return;
+        foreach (Vector2Int cell in cells)
+            occupiedBuildingCells.Add(new Vector2(cell.x, cell.y));
+    }
+
+    public static void FreeOccupancyCells(IEnumerable<Vector2Int> cells)
+    {
+        if (cells == null) return;
+        foreach (Vector2Int cell in cells)
+            occupiedBuildingCells.Remove(new Vector2(cell.x, cell.y));
     }
 
     [Header("Building Prefabs")]
@@ -134,7 +150,15 @@ public class BuildingManager : MonoBehaviour, IOnEventCallback
         }
 
         GameObject go = Instantiate(stegPrefab);
-        go.transform.localScale = new Vector3(1.3f, 1.3f, 1f);
+
+        // Stege sind 1x1: Sprite exakt auf eine Grid-Zelle skalieren (nicht 1.3x wie frueher).
+        SpriteRenderer stegRenderer = go.GetComponentInChildren<SpriteRenderer>();
+        if (stegRenderer != null && stegRenderer.sprite != null)
+        {
+            Vector2 spriteSize = stegRenderer.sprite.bounds.size;
+            if (spriteSize.x > 0f && spriteSize.y > 0f)
+                go.transform.localScale = new Vector3(1f / spriteSize.x, 1f / spriteSize.y, 1f);
+        }
 
         Steg steg = go.GetComponent<Steg>();
         if (steg == null)
@@ -581,6 +605,7 @@ public class BuildingManager : MonoBehaviour, IOnEventCallback
             }
 
             ship.SyncFromData();
+            ship.InitializeOccupancy(position, occupiedWidth, occupiedHeight);
         }
 
         if (data.isDefenseTower)
@@ -702,7 +727,24 @@ public class BuildingManager : MonoBehaviour, IOnEventCallback
 
     // ── Ship Water Pathfinding ───────────────────────────────────────────
 
-    public static List<Vector2> FindWaterPath(Vector2 start, Vector2 destination, int maxIterations = 5000)
+    /// <summary>
+    /// Grobe Kartengrenze in Zellen. Frueher war hier hart +/-200, wodurch
+    /// Ziele auf weiter aussen liegenden Inseln nie gefunden wurden. A* lief
+    /// dann in sein Iterationslimit und lieferte einen leeren Pfad - das Schiff
+    /// fuhr anschliessend geradeaus (auch ueber Land) zum Klickpunkt.
+    /// </summary>
+    public static int MapCellLimit
+    {
+        get
+        {
+            int half = GridManager.Instance != null
+                ? Mathf.RoundToInt(GridManager.Instance.GetGridSize() / 2f)
+                : 500;
+            return Mathf.Max(200, half + 4);
+        }
+    }
+
+    public static List<Vector2> FindWaterPath(Vector2 start, Vector2 destination, int maxIterations = 100000)
     {
         Vector2Int startGrid = new Vector2Int(Mathf.RoundToInt(start.x), Mathf.RoundToInt(start.y));
         Vector2Int destGrid = new Vector2Int(Mathf.RoundToInt(destination.x), Mathf.RoundToInt(destination.y));
@@ -718,7 +760,9 @@ public class BuildingManager : MonoBehaviour, IOnEventCallback
         frontier.Enqueue(startGrid, 0f);
         var cameFrom = new Dictionary<Vector2Int, Vector2Int>();
         var costSoFar = new Dictionary<Vector2Int, float> { [startGrid] = 0f };
+        var closed = new HashSet<Vector2Int>();
         Vector2Int[] dirs = { new Vector2Int(1,0), new Vector2Int(-1,0), new Vector2Int(0,1), new Vector2Int(0,-1) };
+        int limit = MapCellLimit;
         int iterations = 0;
 
         while (frontier.Count > 0 && iterations++ < maxIterations)
@@ -726,12 +770,17 @@ public class BuildingManager : MonoBehaviour, IOnEventCallback
             Vector2Int current = frontier.Dequeue();
             if (current == destGrid)
                 return ReconstructWaterPath(cameFrom, destGrid);
+            if (!closed.Add(current)) continue;
 
             foreach (var d in dirs)
             {
                 Vector2Int next = current + d;
-                if (IslandManager.IsLand(next)) continue; // Ships can't go over land
-                if (next.x < -200 || next.x > 200 || next.y < -200 || next.y > 200) continue;
+                if (next.x < -limit || next.x > limit || next.y < -limit || next.y > limit) continue;
+                // Schiffe duerfen nicht ueber Land fahren. Der Start zaehlt
+                // nicht: steht das Schiff bereits auf Land, muss es von dort
+                // herausfahren koennen (Ship.MoveTo baut dafuer einen
+                // Landpfad zum naechsten Ufer).
+                if (IslandManager.IsLand(next)) continue;
 
                 float newCost = costSoFar[current] + 1f;
                 if (costSoFar.TryGetValue(next, out float existingCost) && newCost >= existingCost)
