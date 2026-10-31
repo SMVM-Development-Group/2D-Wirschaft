@@ -10,8 +10,8 @@ using TMPro;
 /// Menü oben rechts mit umschaltbarem "Schulmodus".
 ///
 /// Schulmodus:
-///   • Maus 1 Sekunde nicht bewegt  -> grauer Balken erscheint über dem Zeiger
-///   • Balken füllt sich in 3 Sekunden
+///   • Maus still stehen -> grauer Balken erscheint über dem Zeiger
+///   • Balken füllt sich in 1 Sekunde (kompletter Cooldown = 1s)
 ///   • ist er voll, wird ein Linksklick ausgelöst
 ///
 /// Wird automatisch von Player_UI.BuildUI() am HUD-Canvas installiert.
@@ -21,10 +21,10 @@ public class SchoolModeUI : MonoBehaviour
     private const string EnabledPrefKey = "SchoolMode.Enabled";
 
     [Header("Schulmodus")]
-    [Tooltip("Zeit, die die Maus still stehen muss, bevor der Balken erscheint.")]
-    [SerializeField] private float idleDelay = 1f;
+    [Tooltip("Zusaetzliche Wartezeit, bevor der Balken erscheint. 0 = Balken startet sofort.")]
+    [SerializeField] private float idleDelay = 0f;
     [Tooltip("Zeit, bis der Balken voll ist und der Linksklick ausgelöst wird.")]
-    [SerializeField] private float fillDuration = 3f;
+    [SerializeField] private float fillDuration = 1f;
     [Tooltip("Wenn aktiv, wiederholt sich der Klick, solange die Maus still steht.")]
     [SerializeField] private bool repeatWhileIdle = true;
 

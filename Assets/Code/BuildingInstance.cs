@@ -21,6 +21,7 @@ public class BuildingInstance : MonoBehaviour
     private const float HealthBarWidth = 0.8f;
     private const float HealthBarHeight = 0.08f;
     private const byte BuildingCaptureEventCode = 17;
+    private const byte PlayerEliminatedEventCode = 27;
     private const float HealthBarY = -0.5f;
     
     private bool isConstructed = false;
@@ -696,21 +697,25 @@ public class BuildingInstance : MonoBehaviour
         if (isLocal && data != null && (data.isWarehouseType || data.canBuildOnOtherIslands))
         {
             bool anyLeft = false;
+            // WICHTIG: das ZERSTOERTE Lagerhaus selbst (und alles am selben GameObject)
+            // NICHT mitzaehlen — Destroy wirkt erst am Frame-Ende, ein rohes
+            // wh != null wuerde es sonst fälschlich als "noch vorhanden" zählen.
             if (WarehouseManager.Instance != null)
             {
                 foreach (var wh in WarehouseManager.Instance.LocalWarehouses)
-                    if (wh != null && wh.isLocal) { anyLeft = true; break; }
+                    if (wh != null && wh.isLocal && wh.transform.root != transform.root) { anyLeft = true; break; }
             }
             if (!anyLeft)
             {
                 foreach (var bi in BuildingInstance.AllBuildings)
-                    if (bi != null && bi.isLocal && bi.data != null && bi.data.isWarehouseType) { anyLeft = true; break; }
+                    if (bi != null && bi != this && bi.isLocal && bi.data != null && bi.data.isWarehouseType) { anyLeft = true; break; }
             }
             if (!anyLeft)
             {
                 NotificationManager.Instance?.Notify("game_over",
                     "ALLE LAGERHÄUSER ZERSTÖRT! DU HAST VERLOREN!", 30f);
                 Debug.LogError("[GAME OVER] Kein Lagerhaus mehr vorhanden!");
+                EliminateLocalPlayer();
             }
         }
 
@@ -725,19 +730,63 @@ public class BuildingInstance : MonoBehaviour
         Destroy(gameObject);
     }
 
+    /// <summary>
+    /// Letztes Lagerhaus zerstoert -> der Spieler ist GESTORBEN.
+    /// Vernichtet alle eigenen Bewohner und Soldaten und informiert die anderen
+    /// Clients, damit sie die Kopien des Toten entfernen.
+    /// Schiffe werden absichtlich NICHT zerstoert (geladene Einheiten wuerden sonst
+    /// beim Wrack wieder an Land ausgesetzt).
+    /// </summary>
+    private void EliminateLocalPlayer()
+    {
+        // Leute (Dorfbewohner + Bauarbeiter) sterben
+        VillagerManager.Instance?.KillAllLocalVillagers();
+
+        // Eigene Soldaten sterben (der Authority-Client zerstoert selbst,
+        // die Kopien auf fremden Clients verschwinden durch das Eliminierungs-Event)
+        var soldiers = new List<Soldier>(Soldier.ActiveSoldiers);
+        foreach (var sol in soldiers)
+        {
+            if (sol == null) continue;
+            if (sol.team != Team.Player) continue;
+            if (!sol.IsOwnedByLocalPlayer) continue;
+            sol.NetDestroy();
+        }
+
+        NotificationManager.Instance?.Notify("player_dead",
+            "DU BIST GESTORBEN! Dein letztes Lagerhaus ist gefallen.", 30f);
+
+        if (PhotonNetwork.InRoom)
+        {
+            SendOptions sendOpts = new SendOptions { Reliability = true };
+            PhotonNetwork.RaiseEvent(PlayerEliminatedEventCode,
+                new object[] { NetCombat.LocalActorId },
+                new RaiseEventOptions { Receivers = ReceiverGroup.Others }, sendOpts);
+        }
+    }
+
     /// <summary>Gebäude abreißen – gibt Hälfte der Baukosten zurück.</summary>
     public void Demolish()
     {
         if (!isLocal) return;
 
-        if (ResourceManager.Instance != null)
+        if (data != null)
         {
-            ResourceManager.Instance.AddResource("holz",  data.woodCost  / 2);
-            ResourceManager.Instance.AddResource("stein", data.stoneCost / 2);
-            ResourceManager.Instance.AddResource("eisen", data.ironCost  / 2);
-            ResourceManager.Instance.AddResource("gold",  data.goldCost  / 2);
+            if (ResourceManager.Instance != null)
+            {
+                ResourceManager.Instance.AddResource("holz",  data.woodCost  / 2);
+                ResourceManager.Instance.AddResource("stein", data.stoneCost / 2);
+                ResourceManager.Instance.AddResource("eisen", data.ironCost  / 2);
+                ResourceManager.Instance.AddResource("gold",  data.goldCost  / 2);
+            }
+            Debug.Log($"[BuildingInstance] {data.buildingName} abgerissen.");
         }
-        Debug.Log($"[BuildingInstance] {data.buildingName} abgerissen.");
+        else
+        {
+            // data kann null sein (z.B. frisch platziert aber kein BuildingData zugewiesen)
+            // – dann trotzdem abreißen, ohne Kosten-Erstattung.
+            Debug.LogWarning("[BuildingInstance] Gebäude ohne BuildingData abgerissen (keine Erstattung).");
+        }
         Destroy(gameObject);
     }
 

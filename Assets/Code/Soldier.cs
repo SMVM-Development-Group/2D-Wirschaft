@@ -312,6 +312,20 @@ public class Soldier : MonoBehaviour
         }
     }
 
+    /// <summary>
+    /// Netzweite Positionssetzung (z.B. Entladen aus einem Schiff). Teleportiert
+    /// die Kopie und richtet die Interpolation sofort auf die Zielposition, damit
+    /// nichts auf einer veralteten Position haengen bleibt.
+    /// </summary>
+    public void NetRelocate(Vector3 position)
+    {
+        transform.position = position;
+        syncTargetPosition = position;
+        lastSentPosition = Vector3.zero; // naechster Heartbeat sendet die frische Position sofort
+        transform.rotation = Quaternion.identity;
+        if (!gameObject.activeSelf) gameObject.SetActive(true);
+    }
+
     private void SimulateOwned()
     {
         Vector2Int currentGrid = new Vector2Int(Mathf.RoundToInt(transform.position.x), Mathf.RoundToInt(transform.position.y));

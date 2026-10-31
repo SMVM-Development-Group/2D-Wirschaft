@@ -11,6 +11,7 @@ public class ShipSlot
     public string resourceId = "";
     public int amount = 0;
     public SoldierType soldierType = SoldierType.Spear;
+    public int loadedSoldierNetId = 0;   // netId des geladenen Soldaten (fuer Netz-Sync)
     public Villager villager = null;
     public Soldier loadedSoldierRef = null;
 
@@ -22,6 +23,7 @@ public class ShipSlot
         content = SlotContent.Empty;
         resourceId = "";
         amount = 0;
+        loadedSoldierNetId = 0;
         villager = null;
         loadedSoldierRef = null;
     }

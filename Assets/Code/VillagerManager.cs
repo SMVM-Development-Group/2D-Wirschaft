@@ -30,6 +30,7 @@ public class VillagerManager : MonoBehaviour, IOnEventCallback
     private float hudUpdateTimer = 0f;
 
     private List<BuildingInstance> pendingBuildings = new List<BuildingInstance>();
+    private float tryAssignTimer = 0f;
     private float currentFoodMoodEffect = 0f;
     private float currentWheatMoodEffect = 0f;
     private float currentLuxuryMoodEffect = 0f;
@@ -308,7 +309,13 @@ public class VillagerManager : MonoBehaviour, IOnEventCallback
 
         if (pendingBuildings.Count > 0)
         {
-            TryAssignWorkers();
+            // Gedrosselte Berufs-Zuweisung (vorher JEDEN Frame – inkl. Insel-Pruefung)
+            tryAssignTimer -= Time.deltaTime;
+            if (tryAssignTimer <= 0f)
+            {
+                tryAssignTimer = 0.25f;
+                TryAssignWorkers();
+            }
         }
 
         // Periodischer Villager-Zustands-Broadcast (nur der Besitzer sendet)
@@ -395,7 +402,10 @@ public class VillagerManager : MonoBehaviour, IOnEventCallback
             BuildingInstance b = pendingBuildings[i];
             if (b.NeedsMoreWorkers())
             {
-                Villager worker = GetAvailableWorker();
+                // Bauarbeiter laufen NICHT über das Wasser zu anderen Inseln –
+                // sie erreichen fremde Inseln NUR per Schiff. Nur einen freien
+                // Bauarbeiter nehmen, der auf derselben Insel wie das Gebäude steht.
+                Villager worker = GetAvailableWorkerOnSameIsland(b);
                 if (worker != null)
                 {
                     Debug.Log($"[VillagerManager] Assigning worker to {b.data.buildingName}");
@@ -410,8 +420,61 @@ public class VillagerManager : MonoBehaviour, IOnEventCallback
             else
             {
                 pendingBuildings.RemoveAt(i);
+                if (islandCache != null && islandCache.ContainsKey(b))
+                {
+                    islandCache.Remove(b);
+                }
             }
         }
+    }
+
+    /// <summary>
+    /// Erster FREIER Bauarbeiter, der auf derselben Insel wie das Gebaeude steht.
+    /// (Bauarbeiten auf fremden Inseln erreichen nur Bauarbeiter, die dort per
+    /// Schiff gelandet sind.) Stumm — kein Notification-Spam im Zuweisungs-Check.
+    /// </summary>
+    private Villager GetAvailableWorkerOnSameIsland(BuildingInstance building)
+    {
+        if (building == null) return null;
+
+        foreach (var v in activeVillagers)
+        {
+            if (v == null || !v.isLocal) continue;
+            if (v.role != Villager.Role.Worker) continue;
+            if (v.IsBusy()) continue;
+
+            if (IsWorkerOnSameIsland(v, building)) return v;
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// Steht der Bauarbeiter auf derselben Insel wie das Gebäude?
+    /// Ergebnis wird 5s je Gebäude gecacht (werden bzgl. Steg-Verbindung geaendert).
+    /// </summary>
+    private static readonly Dictionary<BuildingInstance, (HashSet<Vector2Int> cells, float expiry)> islandCache =
+        new Dictionary<BuildingInstance, (HashSet<Vector2Int> cells, float expiry)>();
+
+    private static bool IsWorkerOnSameIsland(Villager worker, BuildingInstance building)
+    {
+        if (worker == null || building == null) return false;
+
+        Vector2Int workerGrid = new Vector2Int(
+            Mathf.RoundToInt(worker.transform.position.x),
+            Mathf.RoundToInt(worker.transform.position.y));
+        Vector2Int buildingGrid = new Vector2Int(
+            Mathf.RoundToInt(building.transform.position.x),
+            Mathf.RoundToInt(building.transform.position.y));
+
+        if (islandCache.TryGetValue(building, out var entry) && Time.unscaledTime < entry.expiry &&
+            entry.cells != null)
+        {
+            return entry.cells.Contains(workerGrid);
+        }
+
+        var islandCells = BuildingManager.FloodFillIsland(buildingGrid);
+        islandCache[building] = (islandCells, Time.unscaledTime + 5f);
+        return islandCells.Contains(workerGrid);
     }
 
     public Villager GetAvailableWorker()
@@ -445,6 +508,70 @@ public class VillagerManager : MonoBehaviour, IOnEventCallback
         {
             activeVillagers.Remove(v);
         }
+    }
+
+    /// <summary>
+    /// Alle EIGENEN Bewohner/Bauarbeiter sterben (z.B. letztes Lagerhaus gefallen
+    /// -> Spieler ist gestorben). Soldaten sterben separat ueber NetCombat.
+    /// </summary>
+    public void KillAllLocalVillagers()
+    {
+        var snapshot = new List<Villager>(activeVillagers);
+        foreach (var v in snapshot)
+        {
+            if (v == null) continue;
+            if (!v.isLocal) continue;
+
+            SpawnDeathText(v.transform.position, "☠ Gestorben!");
+            NotifyVillagerConverted(v);
+            Destroy(v.gameObject);
+        }
+
+        // HUD-Zaehler aktualisieren (Population = 0)
+        UpdateHUD();
+    }
+
+    /// <summary>Entfernt die Fern-Kopien (Proxy) aller Bewohner eines gestorbenen Spielers.</summary>
+    public void KillRemoteVillagersOf(int ownerActorNumber)
+    {
+        int removed = 0;
+        List<int> toRemove = new List<int>();
+
+        foreach (var pair in remoteVillagers)
+        {
+            Villager v = pair.Value;
+            if (v == null || v.ownerActorNumber != ownerActorNumber) continue;
+
+            SpawnDeathText(v.transform.position, "☠ Gestorben!");
+            Destroy(v.gameObject);
+            toRemove.Add(pair.Key);
+            removed++;
+        }
+
+        foreach (int key in toRemove)
+        {
+            remoteVillagers.Remove(key);
+        }
+
+        if (removed > 0)
+        {
+            Debug.Log($"[VillagerManager] {removed} Fern-Bewohner von totem Spieler {ownerActorNumber} entfernt.");
+        }
+    }
+
+    private static void SpawnDeathText(Vector3 position, string text)
+    {
+        GameObject textGO = new GameObject("EliminatedText");
+        textGO.transform.position = position + Vector3.up * 0.5f;
+        var textMesh = textGO.AddComponent<TextMesh>();
+        textMesh.text = text;
+        textMesh.fontSize = 18;
+        textMesh.characterSize = 0.08f;
+        textMesh.color = new Color(0.9f, 0.1f, 0.1f);
+        textMesh.alignment = TextAlignment.Center;
+        textMesh.anchor = TextAnchor.MiddleCenter;
+        textGO.AddComponent<SelfMovingText>();
+        Destroy(textGO, 2.5f);
     }
 
     private void RemoveVillager()

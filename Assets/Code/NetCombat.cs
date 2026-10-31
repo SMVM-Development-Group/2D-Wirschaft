@@ -15,6 +15,7 @@ public static class NetCombat
     public const byte SoldierDieEvent = 23;    // { int netId }
     public const byte ShipDamageEvent = 24;    // { int shipId, int damage }
     public const byte ShipDestroyEvent = 25;   // { int shipId }
+    public const byte SoldierShipEvent = 28;   // { int netId, int mode(0=eingeladen/1=entladen), float x, float y }
 
     // IDs: <actorNumber> * 1_000_000 + laufende Nummer (kollisionsfrei pro Client)
     private const int IdMultiplier = 1000000;
@@ -183,6 +184,35 @@ public static class NetCombat
         }
     }
 
+    // ── Soldaten Ein-/Entladen per Schiff (Event 28) ───────────────────────
+    /// <summary>
+    /// Repositioniert/versteckt die Soldaten-Kopie auf fremden Clients, wenn der
+    /// Besitzer den Soldaten auf ein Schiff laedt (mode 0) oder entlaedt (mode 1).
+    /// Ohne dieses Event steht die Kopie unsichtbar auf der alten Insel bzw. das
+    /// entladene Objekt schiebt sich erst mit dem naechsten Positions-Heartbeat dort hin.
+    /// </summary>
+    public static void ReceiveSoldierShipEvent(object[] data)
+    {
+        if (data == null || data.Length < 4) return;
+        int netId = (int)data[0];
+        int mode = (int)data[1];
+        float x = (float)data[2];
+        float y = (float)data[3];
+
+        if (!TryGetSoldier(netId, out Soldier s)) return;
+
+        if (mode == 0)
+        {
+            // Eingeladen: Kopie verstecken (sie ist jetzt "im Schiff")
+            s.gameObject.SetActive(false);
+        }
+        else
+        {
+            // Entladen: Kopie an Zielposition setzen und sofort sichtbar machen
+            s.NetRelocate(new Vector3(x, y, s.transform.position.z));
+        }
+    }
+
     // ── Soldaten spawner (einzige Quelle für Soldaten-Objekte) ────────────
     /// <summary>
     /// Erzeugt einen Soldaten lokal und – wenn broadcast – synchronisiert ihn über Event 12.
@@ -274,6 +304,9 @@ public class NetCombatRunner : MonoBehaviour, IOnEventCallback
                 break;
             case NetCombat.ShipDestroyEvent:
                 if (photonEvent.CustomData is object[] shipDie) NetCombat.ReceiveShipDestroy(shipDie);
+                break;
+            case NetCombat.SoldierShipEvent:
+                if (photonEvent.CustomData is object[] shipLoad) NetCombat.ReceiveSoldierShipEvent(shipLoad);
                 break;
         }
     }

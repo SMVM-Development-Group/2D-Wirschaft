@@ -201,7 +201,7 @@ public class BuildingInfoPanel : MonoBehaviour
         else if (currentBuilding.IsProductionPaused)
             statusStr = $"<color={GameUITheme.HtmlBad}>⏸ Produktion pausiert</color>";
         else
-            statusStr = $"<color={GameUITheme.HtmlGood}>✔ Aktiv</color>";
+            statusStr = $"<color={GameUITheme.HtmlGood}>+ Aktiv</color>";
         txtStatus.text = statusStr;
 
         if (currentBuilding.ProvidesSleep && (d == null || !d.isBarracks))
@@ -356,7 +356,7 @@ public class BuildingInfoPanel : MonoBehaviour
                 }
                 else
                 {
-                    txtSchedule.text = $"<b>Arbeitsplan:</b> Freizeit-Plan\n<color={GameUITheme.HtmlGood}>✔ +Zufriedenheit (Mittagspause & Freizeit)</color>";
+                    txtSchedule.text = $"<b>Arbeitsplan:</b> Freizeit-Plan\n<color={GameUITheme.HtmlGood}>+ Zufriedenheit (Mittagspause & Freizeit)</color>";
                     txtScheduleBtnLabel.text = " Plan: Freizeit";
                 }
             }
@@ -542,7 +542,7 @@ public class BuildingInfoPanel : MonoBehaviour
         var nameLE = txtName.gameObject.AddComponent<LayoutElement>();
         nameLE.flexibleWidth = 1f;
 
-        var closeBtn = MakeButton("CloseBtn", headerRow.transform, "✕", btnDanger, 34f, 34f, 18f);
+        var closeBtn = MakeButton("CloseBtn", headerRow.transform, "X", btnDanger, 34f, 34f, 18f);
         closeBtn.onClick.AddListener(Hide);
 
         // ── Trennlinie ───────────────────────────────────────────────────────

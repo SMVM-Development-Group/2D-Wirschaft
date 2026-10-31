@@ -176,7 +176,7 @@ public class ShipCargoUI : MonoBehaviour
         var nameLE = txtName.gameObject.AddComponent<LayoutElement>();
         nameLE.flexibleWidth = 1f;
 
-        var btnClose = MakeButton("CloseBtn", headerRow.transform, "✕", GameUITheme.ButtonDanger, 34f, 34f, 16f);
+        var btnClose = MakeButton("CloseBtn", headerRow.transform, "X", GameUITheme.ButtonDanger, 34f, 34f, 16f);
         btnClose.onClick.AddListener(HideShipUI);
 
         MakeDivider(inner.transform);
@@ -287,7 +287,7 @@ public class ShipCargoUI : MonoBehaviour
         var headerRow = MakeLayoutRow("SubHeader", subFrame.transform, 0f, 36f);
         subUITitle = MakeTMP("SubTitle", headerRow.transform, "", 18f, FontStyles.Bold, valueColor, TextAlignmentOptions.Left);
         AddLE(subUITitle.gameObject, flexW: 1f);
-        subUIClose = MakeButton("SubClose", headerRow.transform, "✕", GameUITheme.ButtonDanger, 30f, 30f, 14f);
+        subUIClose = MakeButton("SubClose", headerRow.transform, "X", GameUITheme.ButtonDanger, 30f, 30f, 14f);
         subUIClose.onClick.AddListener(() => subUIRoot.SetActive(false));
 
         MakeDivider(subFrame.transform);

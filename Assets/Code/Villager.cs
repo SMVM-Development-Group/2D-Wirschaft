@@ -659,6 +659,16 @@ public class Villager : MonoBehaviour
         if (!netHasTarget) return;
         Vector2 current = transform.position;
         Vector2 next = Vector2.MoveTowards(current, netTargetPosition, moveSpeed * Time.deltaTime);
+
+        // Inselwechsel (z.B. per Schiff geladen/entladen): Niemals visuell ÜBER
+        // Wasser laufen. Ist der naechste Schritt unwegsam (Wasser) und weit
+        // entfernt, direkt auf die Netzposition teleportieren.
+        if (!BuildingManager.IsWalkable(next) && Vector2.Distance(current, netTargetPosition) > 2f)
+        {
+            transform.position = new Vector3(netTargetPosition.x, netTargetPosition.y, transform.position.z);
+            return;
+        }
+
         transform.position = new Vector3(next.x, next.y, transform.position.z);
     }
 

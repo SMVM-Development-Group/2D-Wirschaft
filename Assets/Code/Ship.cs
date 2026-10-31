@@ -40,6 +40,13 @@ public class Ship : MonoBehaviour
     public int maxHP = 180;
     public int currentHP = 180;
 
+    // HP-Balken (analog zu BuildingInstance)
+    private GameObject hpBar;
+    private Renderer hpBarRenderer;
+    private const float HPBarWidth = 1.3f;
+    private const float HPBarHeight = 0.1f;
+    private const float HPBarY = 0.95f;
+
     [Header("Crew")]
     public Villager assignedCrew;
 
@@ -209,7 +216,10 @@ public class Ship : MonoBehaviour
             bc.size = new Vector2(1.5f, 1.5f);
         }
 
+        CreateHealthBar();
+
         OnCargoChanged += UpdateVisualState;
+        OnCargoChanged?.Invoke();
 
         if (shipNetId == 0 && isLocal)
         {
@@ -237,6 +247,59 @@ public class Ship : MonoBehaviour
             int total = slots.Count;
             float ratio = total > 0 ? (float)used / total : 0f;
             spriteRenderer.color = Color.Lerp(originalColor, selectedColor, ratio * 0.3f);
+        }
+    }
+
+    // ── HP-Balken ────────────────────────────────────────────────────────
+
+    private void CreateHealthBar()
+    {
+        Transform existing = transform.Find("_HealthBar");
+        if (existing != null)
+        {
+            hpBar = existing.gameObject;
+            hpBarRenderer = existing.GetComponent<Renderer>();
+            return;
+        }
+
+        hpBar = GameObject.CreatePrimitive(PrimitiveType.Quad);
+        hpBar.name = "_HealthBar";
+        hpBar.transform.SetParent(transform, false);
+        hpBar.transform.localPosition = new Vector3(0f, HPBarY, -0.2f);
+        hpBar.transform.localScale = new Vector3(HPBarWidth, HPBarHeight, 1f);
+
+        hpBarRenderer = hpBar.GetComponent<Renderer>();
+        if (hpBarRenderer != null)
+        {
+            hpBarRenderer.material = new Material(Shader.Find("Sprites/Default"));
+            hpBarRenderer.material.color = Color.green;
+        }
+
+        Destroy(hpBar.GetComponent<Collider>());
+        hpBar.SetActive(false);
+    }
+
+    private void UpdateHealthBar()
+    {
+        if (hpBar == null) CreateHealthBar();
+        if (hpBar == null) return;
+
+        if (currentHP >= maxHP)
+        {
+            hpBar.SetActive(false);
+            return;
+        }
+
+        hpBar.SetActive(true);
+        float ratio = maxHP > 0 ? Mathf.Clamp01((float)currentHP / maxHP) : 0f;
+        hpBar.transform.localScale = new Vector3(HPBarWidth * ratio, HPBarHeight, 1f);
+        hpBar.transform.localPosition = new Vector3(-HPBarWidth * (1f - ratio) * 0.5f, HPBarY, -0.2f);
+
+        if (hpBarRenderer != null)
+        {
+            hpBarRenderer.material.color = ratio > 0.5f ? Color.green
+                : ratio > 0.25f ? Color.yellow
+                : Color.red;
         }
     }
 
@@ -268,13 +331,34 @@ public class Ship : MonoBehaviour
     public void ApplyNetState(object[] data)
     {
         if (data == null || data.Length < 5) return;
-        // { shipId, x, y, rot, flags, cargoUsed }
+        // { shipId, x, y, rot, flags, cargoUsed, hp, maxHp }
         float nx = (float)data[1];
         float ny = (float)data[2];
         remoteTargetRot = (float)data[3];
         float flags = (float)data[4];
         remoteMoving = flags >= 0.5f;
         remoteCargoUsed = data.Length > 5 ? (int)data[5] : -1;
+
+        // HP-Sync: nur OBERGIS anwenden (Schaden), volle HP verstecken den Balken
+        if (data.Length > 7)
+        {
+            int netHP = Mathf.Max(0, Mathf.RoundToInt((float)data[6]));
+            if (netHP < currentHP)
+            {
+                currentHP = netHP;
+                UpdateHealthBar();
+            }
+            else if (netHP > currentHP)
+            {
+                currentHP = Mathf.Min(netHP, maxHP);
+                UpdateHealthBar();
+            }
+            if (data.Length > 8)
+            {
+                int netMax = Mathf.Max(1, Mathf.RoundToInt((float)data[7]));
+                if (netMax != maxHP) { maxHP = netMax; }
+            }
+        }
 
         remoteTargetPosition = new Vector3(nx, ny, transform.position.z);
         hasRemoteState = true;
@@ -350,7 +434,9 @@ public class Ship : MonoBehaviour
             transform.position.y,
             transform.rotation.eulerAngles.z,
             movingFlag,
-            GetUsedSlotCount()
+            GetUsedSlotCount(),
+            (float)currentHP,
+            (float)maxHP
         };
         NetCombat.Raise(14, data, false);
     }
@@ -1086,9 +1172,18 @@ public class Ship : MonoBehaviour
                 slot.soldierType = type;
                 slot.amount = 1;
                 slot.loadedSoldierRef = available;
+                slot.loadedSoldierNetId = available.netId;
                 available.gameObject.SetActive(false);
                 OnCargoChanged?.Invoke();
                 BroadcastCargoState();
+
+                // Allen Clients sagen: diese Soldaten-Kopie ist jetzt "im Schiff"
+                // (sonst steht die Kopie unsichtbar/weiter auf der alten Insel).
+                if (PhotonNetwork.InRoom && slot.loadedSoldierNetId != 0)
+                {
+                    NetCombat.Raise(NetCombat.SoldierShipEvent,
+                        new object[] { slot.loadedSoldierNetId, 0, 0f, 0f }, true);
+                }
                 return true;
             }
         }
@@ -1173,10 +1268,18 @@ public class Ship : MonoBehaviour
                     slot.loadedSoldierRef.transform.position = spawnPos;
                     slot.loadedSoldierRef.gameObject.SetActive(true);
                     slot.loadedSoldierRef.transform.rotation = Quaternion.identity;
+                    BroadcastSoldierUnloaded(slot.loadedSoldierRef.netId, spawnPos);
+                }
+                else if (slot.loadedSoldierNetId != 0)
+                {
+                    // Referenz verloren, aber netId bekannt: die (auf fremden
+                    // Clients noch vorhandene) Kopie direkt zum Entladeort holen.
+                    // KEINEN neuen Spawn — sonst gaebe es dort doppelt Soldaten.
+                    BroadcastSoldierUnloaded(slot.loadedSoldierNetId, spawnPos);
                 }
                 else
                 {
-                    // Soldat auf dem gegnerischen Client war nicht geladen (normal, da leer) → neu erzeugen
+                    // Nicht mal eine netId bekannt → Ersatz mit neuem ID-Spawn broadcasten
                     int actor = PhotonNetwork.InRoom ? PhotonNetwork.LocalPlayer.ActorNumber : 1;
                     NetCombat.SpawnSoldier(slot.soldierType, WeaponMaterial.Stone, new Vector3(spawnPos.x, spawnPos.y, 0f), actor, true);
                 }
@@ -1185,6 +1288,17 @@ public class Ship : MonoBehaviour
         }
         OnCargoChanged?.Invoke();
         BroadcastCargoState();
+    }
+
+    /// <summary>
+    /// Teilt allen Clients mit, dass ein Soldat an dieser Stelle neu positioniert
+    /// wurde (Entladen aus dem Schiff) — siehe NetCombat.SoldierShipEvent.
+    /// </summary>
+    private void BroadcastSoldierUnloaded(int soldierNetId, Vector2 landPos)
+    {
+        if (!PhotonNetwork.InRoom || soldierNetId == 0) return;
+        NetCombat.Raise(NetCombat.SoldierShipEvent,
+            new object[] { soldierNetId, 1, landPos.x, landPos.y }, true);
     }
 
     private Vector2 FindNearestLandCell(Vector2 from)
@@ -1221,6 +1335,12 @@ public class Ship : MonoBehaviour
                 Vector2 landPos = FindNearestLandCell(transform.position);
                 slot.loadedSoldierRef.transform.position = landPos;
                 slot.loadedSoldierRef.gameObject.SetActive(true);
+                BroadcastSoldierUnloaded(slot.loadedSoldierRef.netId, landPos);
+            }
+            else if (slot.content == ShipSlot.SlotContent.Soldier)
+            {
+                Vector2 landPos = FindNearestLandCell(transform.position);
+                BroadcastSoldierUnloaded(slot.loadedSoldierNetId, landPos);
             }
             slot.Clear();
             OnCargoChanged?.Invoke();
@@ -1304,7 +1424,22 @@ public class Ship : MonoBehaviour
     /// <summary>Lokale HP-Anwendung (nur Clients mit Authority fuer dieses Schiff).</summary>
     public void ApplyLocalDamage(int damage)
     {
+        int previousHP = currentHP;
         currentHP -= Mathf.Max(0, damage);
+
+        if (currentHP != previousHP)
+        {
+            UpdateHealthBar();
+            FlashDamage();
+
+            // HP-Update auch für stehende Schiffe an alle Clients funken
+            // (Balken auf fremden Clients zeigt sonst bis zur naechsten Bewegung alte Werte).
+            if (isLocal && PhotonNetwork.InRoom && shipNetId != 0)
+            {
+                SendSyncEvent(isMoving ? NetFlagMoving : 0f);
+            }
+        }
+
         if (currentHP <= 0)
         {
             currentHP = 0;
@@ -1312,6 +1447,33 @@ public class Ship : MonoBehaviour
             Destroy(gameObject);
             return;
         }
+    }
+
+    /// <summary>Kurzer roter Schadensblitz auf dem Schiffs-Sprite.</summary>
+    private void FlashDamage()
+    {
+        if (spriteRenderer == null) return;
+        if (flashRoutine != null) StopCoroutine(flashRoutine);
+        flashRoutine = StartCoroutine(FlashDamageRoutine());
+    }
+
+    private Coroutine flashRoutine;
+
+    private System.Collections.IEnumerator FlashDamageRoutine()
+    {
+        Color restoreColor = hasBaseColor ? baseColor : originalColor;
+        spriteRenderer.color = new Color(1f, 0.25f, 0.2f, 1f);
+        float t = 0f;
+        float duration = 0.25f;
+        while (t < duration)
+        {
+            t += Time.deltaTime;
+            float f = t / duration;
+            spriteRenderer.color = Color.Lerp(new Color(1f, 0.25f, 0.2f, 1f), restoreColor, f);
+            yield return null;
+        }
+        spriteRenderer.color = restoreColor;
+        flashRoutine = null;
     }
 
     /// <summary>Netzvernichtung (Event 25): ohne erneuten Broadcast.</summary>
@@ -1366,12 +1528,14 @@ public class Ship : MonoBehaviour
                     slot.loadedSoldierRef.transform.position = landPos;
                     slot.loadedSoldierRef.transform.rotation = Quaternion.identity;
                     slot.loadedSoldierRef.gameObject.SetActive(true);
+                    BroadcastSoldierUnloaded(slot.loadedSoldierRef.netId, landPos);
                 }
                 else
                 {
                     // Referenz verloren (z.B. Soldat ausserhalb des Clients erzeugt): Ersatz spawnen.
                     NetCombat.SpawnSoldier(slot.soldierType, WeaponMaterial.Stone,
                         new Vector3(landPos.x, landPos.y, 0f), actor, true);
+                    BroadcastSoldierUnloaded(slot.loadedSoldierNetId, landPos);
                 }
             }
             else if (slot.content == ShipSlot.SlotContent.Builder && slot.villager != null)

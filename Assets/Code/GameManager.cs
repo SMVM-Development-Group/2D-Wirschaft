@@ -23,6 +23,7 @@ public class GameManager : MonoBehaviourPunCallbacks, IOnEventCallback
     private const byte PierLineEventCode = 18;
     private const byte WorldStateRequestEventCode = 20;
     private const byte WorldStateResponseEventCode = 21;
+    private const byte PlayerEliminatedEventCode = 27;
     private int photonEventSenderActor;
     private readonly int maxChatMessages = 6;
     private readonly List<string> chatMessages = new List<string>();
@@ -423,6 +424,12 @@ public class GameManager : MonoBehaviourPunCallbacks, IOnEventCallback
             return;
         }
 
+        if (photonEvent.Code == PlayerEliminatedEventCode && photonEvent.CustomData is object[] elimData)
+        {
+            ReceivePlayerEliminated(elimData);
+            return;
+        }
+
         if (photonEvent.Code == WorldStateRequestEventCode)
         {
             if (PhotonNetwork.IsMasterClient)
@@ -512,6 +519,43 @@ public class GameManager : MonoBehaviourPunCallbacks, IOnEventCallback
         {
             s.ApplyNetState(data);
         }
+    }
+
+    /// <summary>
+    /// Ein anderer Spieler ist gestorben: letztes Lagerhaus zerstoert.
+    /// Entfernt die Kopien (Soldaten + Villager-Proxy) des Toten und kündigt es an.
+    /// </summary>
+    private void ReceivePlayerEliminated(object[] data)
+    {
+        if (data == null || data.Length < 1) return;
+        int deadActor = (int)data[0];
+
+        // Soldaten-Kopien des gestorbenen Spielers entfernen (wir sind
+        // auf diesem Client nur Proxy — die Authority war der Toetludpielden und hat schon zerstoert).
+        var soldiers = new List<Soldier>(Soldier.ActiveSoldiers);
+        foreach (var sol in soldiers)
+        {
+            if (sol == null) continue;
+            if (sol.IsOwnedByLocalPlayer) continue;
+            if (sol.ownerActorNumber != deadActor) continue;
+            Destroy(sol.gameObject);
+        }
+
+        // Villager-Proxy des gestorbenen Spielers entfernen
+        VillagerManager.Instance?.KillRemoteVillagersOf(deadActor);
+
+        string deadName = "Ein Spieler";
+        if (PhotonNetwork.InRoom)
+        {
+            Player deadPlayer = PhotonNetwork.CurrentRoom.GetPlayer(deadActor);
+            if (deadPlayer != null && !string.IsNullOrEmpty(deadPlayer.NickName))
+            {
+                deadName = deadPlayer.NickName;
+            }
+        }
+
+        NotificationManager.Instance?.Notify("player_dead",
+            $"{deadName} IST GESTORBEN! Sein letztes Lagerhaus ist gefallen.", 8f);
     }
 
     private void ReceiveBuildingDamage(object[] data)
