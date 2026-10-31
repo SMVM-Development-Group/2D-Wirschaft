@@ -280,52 +280,18 @@ private bool CheckIslandOwnership(Vector2 center, int occupiedWidth = 0, int occ
         }
         
         // Finde alle Stege die zu einer Insel mit eigenem Lagerhaus gehören
-        HashSet<Vector2Int> validStegPositions = new HashSet<Vector2Int>();
-        
         // Sammle lokale Lagerhaus-Positionen (Register statt FindObjectsOfType)
-        List<Vector2Int> localWarehousePositions = new List<Vector2Int>();
-        if (WarehouseManager.Instance != null)
-        {
-            foreach (var wh in WarehouseManager.Instance.LocalWarehouses)
-            {
-                if (wh == null) continue;
-                localWarehousePositions.Add(new Vector2Int(
-                    Mathf.RoundToInt(wh.transform.position.x),
-                    Mathf.RoundToInt(wh.transform.position.y)
-                ));
-            }
-        }
-        
-        if (localWarehousePositions.Count == 0)
+        if (GetLocalWarehousePositions().Count == 0)
         {
             Debug.Log("Placement Failed: No local warehouse found");
             NotificationManager.Instance?.Notify("island_no_warehouse", 
                 "Du brauchst zuerst ein Lagerhaus auf dieser Insel!", 3f);
             return false;
         }
-        
-        // Für jeden Steg: prüfe ob er zu Land gehört das ein Lagerhaus hat
-        foreach (Vector2Int stegPos in allStegPositions)
-        {
-            // Finde Land das neben diesem Steg ist
-            foreach (var dir in directions)
-            {
-                Vector2Int landPos = stegPos + dir;
-                if (IslandManager.IsLand(landPos))
-                {
-                    // Ist dieses Land auf einer Insel mit eigenem Lagerhaus?
-                    foreach (Vector2Int whPos in localWarehousePositions)
-                    {
-                        if (IsSameIsland(landPos, whPos))
-                        {
-                            validStegPositions.Add(stegPos);
-                            break;
-                        }
-                    }
-                }
-            }
-        }
-        
+
+        // WICHTIG: Die komplette Stegkette (auch weiter draussen liegende Stege)
+        // zaehlt als gueltiger Liegeplatz – nicht nur der landnahe Anfang.
+        HashSet<Vector2Int> validStegPositions = GetValidStegPositions();
         if (validStegPositions.Count == 0)
         {
             Debug.Log("Placement Failed: No pier found belonging to island with warehouse");
@@ -359,6 +325,85 @@ private bool CheckIslandOwnership(Vector2 center, int occupiedWidth = 0, int occ
         NotificationManager.Instance?.Notify("ship_no_pier", 
             "Schiff muss neben einem Steg platziert werden!", 3f);
         return false;
+    }
+
+    /// <summary>Sammelt die Positionen aller eigenen Lagerhaeuser (Register statt FindObjectsOfType).</summary>
+    private List<Vector2Int> GetLocalWarehousePositions()
+    {
+        List<Vector2Int> positions = new List<Vector2Int>();
+        if (WarehouseManager.Instance == null) return positions;
+
+        foreach (var wh in WarehouseManager.Instance.LocalWarehouses)
+        {
+            if (wh == null) continue;
+            positions.Add(new Vector2Int(
+                Mathf.RoundToInt(wh.transform.position.x),
+                Mathf.RoundToInt(wh.transform.position.y)
+            ));
+        }
+        return positions;
+    }
+
+    /// <summary>
+    /// Alle Stege, die zu einer eigenen Insel mit Lagerhaus gehoeren – inklusive
+    /// der ueber eine Stegkette verbundenen Stege weiter draussen. So koennen
+    /// Schiffe entlang des gesamten Stegs anlegen, nicht nur am Landende.
+    /// </summary>
+    private HashSet<Vector2Int> GetValidStegPositions()
+    {
+        HashSet<Vector2Int> validStegPositions = new HashSet<Vector2Int>();
+
+        List<Vector2Int> allStegPositions = BuildingManager.GetStegPositions();
+        if (allStegPositions.Count == 0) return validStegPositions;
+
+        List<Vector2Int> localWarehousePositions = GetLocalWarehousePositions();
+        if (localWarehousePositions.Count == 0) return validStegPositions;
+
+        Vector2Int[] directions = { Vector2Int.up, Vector2Int.down, Vector2Int.left, Vector2Int.right };
+        HashSet<Vector2Int> stegSet = new HashSet<Vector2Int>(allStegPositions);
+        Queue<Vector2Int> queue = new Queue<Vector2Int>();
+
+        // Starte bei Stegen, die direkt an Land mit eigenem Lagerhaus angrenzen.
+        foreach (Vector2Int stegPos in allStegPositions)
+        {
+            foreach (var dir in directions)
+            {
+                Vector2Int landPos = stegPos + dir;
+                if (!IslandManager.IsLand(landPos)) continue;
+
+                bool belongsToLocalIsland = false;
+                foreach (Vector2Int whPos in localWarehousePositions)
+                {
+                    if (IsSameIsland(landPos, whPos))
+                    {
+                        belongsToLocalIsland = true;
+                        break;
+                    }
+                }
+
+                if (belongsToLocalIsland)
+                {
+                    if (validStegPositions.Add(stegPos)) queue.Enqueue(stegPos);
+                    break;
+                }
+            }
+        }
+
+        // BFS: Alle Stege, die ueber die Stegkette mit einem gueltigen Steg verbunden sind.
+        while (queue.Count > 0)
+        {
+            Vector2Int current = queue.Dequeue();
+            foreach (var dir in directions)
+            {
+                Vector2Int neighbor = current + dir;
+                if (validStegPositions.Contains(neighbor)) continue;
+                if (!stegSet.Contains(neighbor)) continue;
+                validStegPositions.Add(neighbor);
+                queue.Enqueue(neighbor);
+            }
+        }
+
+        return validStegPositions;
     }
 
     /// <summary>
@@ -616,66 +661,9 @@ private bool ValidateShipPlacement(Vector2 center, int rotationDegrees, int occu
         }
 
         Vector2Int[] directions = { Vector2Int.up, Vector2Int.down, Vector2Int.left, Vector2Int.right };
-        
-        // Sammle alle gültigen Steg-Positionen (zu Inseln mit Lagerhaus gehörend)
-        List<Vector2Int> localWarehousePositions = new List<Vector2Int>();
-        if (WarehouseManager.Instance != null)
-        {
-            foreach (var wh in WarehouseManager.Instance.LocalWarehouses)
-            {
-                if (wh == null) continue;
-                localWarehousePositions.Add(new Vector2Int(
-                    Mathf.RoundToInt(wh.transform.position.x),
-                    Mathf.RoundToInt(wh.transform.position.y)
-                ));
-            }
-        }
 
-        List<Vector2Int> allStegPositions = BuildingManager.GetStegPositions();
-        HashSet<Vector2Int> stegSet = new HashSet<Vector2Int>(allStegPositions);
-        HashSet<Vector2Int> validStegPositions = new HashSet<Vector2Int>();
-        HashSet<Vector2Int> visited = new HashSet<Vector2Int>();
-        Queue<Vector2Int> queue = new Queue<Vector2Int>();
-        
-        // Starte BFS von allen Stegen, die direkt an Land mit Lagerhaus angrenzen
-        foreach (Vector2Int stegPos in allStegPositions)
-        {
-            foreach (var dir in directions)
-            {
-                Vector2Int landPos = stegPos + dir;
-                if (IslandManager.IsLand(landPos))
-                {
-                    foreach (Vector2Int whPos in localWarehousePositions)
-                    {
-                        if (IsSameIsland(landPos, whPos))
-                        {
-                            visited.Add(stegPos);
-                            queue.Enqueue(stegPos);
-                            validStegPositions.Add(stegPos);
-                            break;
-                        }
-                    }
-                    if (validStegPositions.Contains(stegPos)) break;
-                }
-            }
-        }
-        
-        // BFS: Alle Stege, die über eine Stegkette mit einem gültigen Steg verbunden sind
-        while (queue.Count > 0)
-        {
-            Vector2Int current = queue.Dequeue();
-            foreach (var dir in directions)
-            {
-                Vector2Int neighbor = current + dir;
-                if (visited.Contains(neighbor)) continue;
-                if (stegSet.Contains(neighbor))
-                {
-                    visited.Add(neighbor);
-                    queue.Enqueue(neighbor);
-                    validStegPositions.Add(neighbor);
-                }
-            }
-        }
+        // Alle gueltigen Stege inkl. der ueber die Stegkette verbundenen.
+        HashSet<Vector2Int> validStegPositions = GetValidStegPositions();
 
         // Prüfe ob mindestens eine Zelle des Schiffs neben einem gültigen Steg ist
         float startX = -(occupiedWidth - 1) / 2f;
@@ -778,59 +766,8 @@ private List<ShipPlacementCandidate> GetShipCandidates(Vector3 worldPos)
         Vector2Int[] alongDirections = { Vector2Int.right, Vector2Int.up, Vector2Int.down, Vector2Int.left };
         Vector2Int[] outwardOptions = new Vector2Int[] { Vector2Int.up, Vector2Int.down, Vector2Int.left, Vector2Int.right };
 
-        // Sammle gültige Steg-Positionen (zu Inseln mit Lagerhaus)
-        List<Vector2Int> localWarehousePositions = new List<Vector2Int>();
-        if (WarehouseManager.Instance != null)
-        {
-            foreach (var wh in WarehouseManager.Instance.LocalWarehouses)
-            {
-                if (wh == null) continue;
-                localWarehousePositions.Add(new Vector2Int(
-                    Mathf.RoundToInt(wh.transform.position.x),
-                    Mathf.RoundToInt(wh.transform.position.y)
-                ));
-            }
-        }
-        
-        HashSet<Vector2Int> validStegPositions = new HashSet<Vector2Int>();
-        Vector2Int[] checkDirs = { Vector2Int.up, Vector2Int.down, Vector2Int.left, Vector2Int.right };
-        HashSet<Vector2Int> stegSet = new HashSet<Vector2Int>(pierCells);
-        
-        foreach (Vector2Int stegPos in pierCells)
-        {
-            foreach (var dir in checkDirs)
-            {
-                Vector2Int landPos = stegPos + dir;
-                if (IslandManager.IsLand(landPos))
-                {
-                    foreach (Vector2Int whPos in localWarehousePositions)
-                    {
-                        if (IsSameIsland(landPos, whPos))
-                        {
-                            validStegPositions.Add(stegPos);
-                            break;
-                        }
-                    }
-                }
-            }
-        }
-
-        // BFS: Auch Stege weiter draussen in der Kette sind anlegbar, solange sie
-        // mit der Landseite (Lagerhaus-Insel) verbunden sind.
-        Queue<Vector2Int> chainQueue = new Queue<Vector2Int>();
-        foreach (Vector2Int valid in validStegPositions) chainQueue.Enqueue(valid);
-        while (chainQueue.Count > 0)
-        {
-            Vector2Int current = chainQueue.Dequeue();
-            foreach (var dir in checkDirs)
-            {
-                Vector2Int neighbor = current + dir;
-                if (validStegPositions.Contains(neighbor)) continue;
-                if (!stegSet.Contains(neighbor)) continue;
-                validStegPositions.Add(neighbor);
-                chainQueue.Enqueue(neighbor);
-            }
-        }
+        // Sammle gültige Steg-Positionen (zu Inseln mit Lagerhaus) inkl. Stegkette
+        HashSet<Vector2Int> validStegPositions = GetValidStegPositions();
 
         foreach (Vector2Int pierCell in pierCells)
         {

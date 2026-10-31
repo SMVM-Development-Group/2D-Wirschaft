@@ -15,6 +15,12 @@ public class CameraController : MonoBehaviour
     [Header("Grid Settings")]
     [SerializeField] private float gridFadeZoom = 200f; // Zoom level at which grid disappears
 
+    [Header("Map Bounds")]
+    [Tooltip("Verhindert, dass die Kamera über den Kartenrand hinausschaut.")]
+    [SerializeField] private bool clampToMap = true;
+    [Tooltip("Wie weit man über den Kartenrand hinausschauen darf (ca. eine Inselbreite).")]
+    [SerializeField] private float mapEdgePadding = 40f;
+
     private Camera cam;
     private float targetZoom;
     private Vector2 lastMousePos;
@@ -26,7 +32,7 @@ public class CameraController : MonoBehaviour
         if (GridManager.Instance != null)
         {
             int gridSize = GridManager.Instance.GetGridSize();
-            targetZoom = Mathf.Clamp(gridSize * 0.08f, minZoom, maxZoom);
+            targetZoom = Mathf.Clamp(gridSize * 0.08f, minZoom, GetEffectiveMaxZoom());
         }
         else
         {
@@ -47,17 +53,22 @@ public class CameraController : MonoBehaviour
         HandlePan();
     }
 
+    private void LateUpdate()
+    {
+        ClampToMap();
+    }
+
     private void HandleZoom()
     {
         if (Mouse.current == null) return;
 
         float scroll = Mouse.current.scroll.ReadValue().y;
-        
+
         if (scroll != 0)
         {
             float scrollDelta = scroll > 0 ? 1 : -1;
             targetZoom -= scrollDelta * zoomSpeed * 0.1f;
-            targetZoom = Mathf.Clamp(targetZoom, minZoom, maxZoom);
+            targetZoom = Mathf.Clamp(targetZoom, minZoom, GetEffectiveMaxZoom());
         }
 
         cam.orthographicSize = Mathf.Lerp(cam.orthographicSize, targetZoom, Time.deltaTime * zoomSmoothing);
@@ -97,5 +108,51 @@ public class CameraController : MonoBehaviour
             transform.Translate(move, Space.World);
             lastMousePos = currentMousePos;
         }
+    }
+
+    /// <summary>
+    /// Maximum zoom-out that still fits inside the map plus the small edge
+    /// padding. Prevents the view from becoming wider than that area.
+    /// </summary>
+    private float GetEffectiveMaxZoom()
+    {
+        if (!clampToMap || cam == null || GridManager.Instance == null)
+        {
+            return maxZoom;
+        }
+
+        float halfMap = GridManager.Instance.GetGridSize() * 0.5f;
+        float halfExtent = halfMap + Mathf.Max(0f, mapEdgePadding);
+        // Vertical fit needs orthographicSize <= halfExtent,
+        // horizontal fit needs orthographicSize * aspect <= halfExtent.
+        float fitZoom = halfExtent / Mathf.Max(1f, cam.aspect);
+        return Mathf.Max(minZoom, Mathf.Min(maxZoom, fitZoom));
+    }
+
+    /// <summary>
+    /// Keeps the visible camera area inside the map plus a small edge padding
+    /// (roughly one island width), so the player can look slightly past the
+    /// border but never drift off into the void.
+    /// </summary>
+    private void ClampToMap()
+    {
+        if (!clampToMap || cam == null || GridManager.Instance == null) return;
+
+        float halfMap = GridManager.Instance.GetGridSize() * 0.5f;
+        float halfExtent = halfMap + Mathf.Max(0f, mapEdgePadding);
+        float halfHeight = cam.orthographicSize;
+        float halfWidth = halfHeight * cam.aspect;
+
+        Vector3 pos = transform.position;
+
+        float minX = -halfExtent + halfWidth;
+        float maxX = halfExtent - halfWidth;
+        float minY = -halfExtent + halfHeight;
+        float maxY = halfExtent - halfHeight;
+
+        pos.x = minX > maxX ? 0f : Mathf.Clamp(pos.x, minX, maxX);
+        pos.y = minY > maxY ? 0f : Mathf.Clamp(pos.y, minY, maxY);
+
+        transform.position = pos;
     }
 }

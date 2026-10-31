@@ -7,8 +7,10 @@ public class FogProjector : MonoBehaviour
 
     [Header("Fog Settings")]
     [SerializeField] private Material fogMaterial;
-    [SerializeField] private int maskResolution = 1024;
-    [SerializeField] private float mapSize = 2000f;
+    [Tooltip("Aufloesung der Sicht-/Aufdeck-Maske. Hoeher = schaerferer Nebelrand beim Reinzoomen.")]
+    [SerializeField] private int maskResolution = 2048;
+    [Tooltip("Abgedeckte Weltgroesse. <= 0 = automatisch aus der Grid-Groesse berechnen.")]
+    [SerializeField] private float mapSize = 0f;
 
     private RenderTexture maskTexture;
     private Camera maskCamera;
@@ -149,10 +151,19 @@ public class FogProjector : MonoBehaviour
 
     private void Start()
     {
-        if (GridManager.Instance != null)
+        int gridSize = GridManager.Instance != null ? GridManager.Instance.GetGridSize() : 0;
+        if (gridSize > 0)
         {
-            int gridSize = GridManager.Instance.GetGridSize();
-            mapSize = Mathf.Max(mapSize, gridSize * 1.5f);
+            // Nur so gross wie noetig um das Spielfeld herum aufspannen. Ein zu
+            // grosses mapSize (z.B. 5000 bei einem 700er-Grid) verteilt die
+            // Maskenpixel auf viel zu viele Weltunits: der Sichtrand wird zu einem
+            // breiten, halbtransparenten Verlauf, durch den man beim Reinzoomen
+            // Inseln und Einheiten sieht. 2x Grid laesst noch genug Rand zum Pannen.
+            mapSize = gridSize * 2f;
+        }
+        else if (mapSize <= 0f)
+        {
+            mapSize = 2000f;
         }
 
         SetupFog();
@@ -190,10 +201,12 @@ public class FogProjector : MonoBehaviour
         maskTexture = new RenderTexture(maskResolution, maskResolution, 24);
         maskTexture.filterMode = FilterMode.Bilinear;
 
-        // Aufdeck-Textur: normale Texture2D, wird per SetPixel befüllt
-        exploredResolution = maskResolution;
+        // Aufdeck-Textur: normale Texture2D, wird per SetPixel befüllt.
+        // 1024 reicht (der Aufdeck-Schleier ist ohnehin weich) und haelt den
+        // Texture-Upload klein (2048^2 RGBA waeren 16 MB pro Apply).
+        exploredResolution = Mathf.Min(maskResolution, 1024);
         exploredWorldSize = mapSize;
-        exploredTexture = new Texture2D(maskResolution, maskResolution, TextureFormat.RGBA32, false);
+        exploredTexture = new Texture2D(exploredResolution, exploredResolution, TextureFormat.RGBA32, false);
         exploredTexture.filterMode = FilterMode.Bilinear;
         exploredTexture.wrapMode = TextureWrapMode.Clamp;
 

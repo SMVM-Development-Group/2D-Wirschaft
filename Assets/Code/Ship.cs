@@ -15,6 +15,15 @@ public class Ship : MonoBehaviour
     public Vector2Int spawnOrigin;
     private int shipNetId;      // 0 = nicht initialisiert
 
+    // Belegte Grid-Zellen: damit die Reservierung dem Schiff folgt und beim
+    // Ablegen/Untergehen wieder frei wird (sonst bleibt der Liegeplatz fuer
+    // immer blockiert und man kann dort kein weiteres Schiff bauen).
+    private List<Vector2Int> occupiedCells = new List<Vector2Int>();
+    private Vector2 occupancyCenter;
+    private int footprintWidth = 1;
+    private int footprintHeight = 1;
+    private bool hasOccupancy;
+
     [Header("Cargo System")]
     public List<ShipSlot> slots = new List<ShipSlot>();
 
@@ -23,7 +32,6 @@ public class Ship : MonoBehaviour
     public float rotationSpeed = 180f;
     private Vector3 targetPosition;
     private bool isMoving = false;
-    private float movementStartTime;
     private float currentAngle = 0f;
     private List<Vector2> waterPath = new List<Vector2>();
     private int waterPathIndex = 0;
@@ -127,6 +135,50 @@ public class Ship : MonoBehaviour
         InitializeSlots();
     }
 
+    /// <summary>
+    /// Merkt sich die beim Spawn bereits registrierten Belegungszellen, damit
+    /// sie beim Ablegen bzw. Untergehen wieder freigegeben werden koennen.
+    /// </summary>
+    public void InitializeOccupancy(Vector2 center, int width, int height)
+    {
+        footprintWidth = Mathf.Max(1, width);
+        footprintHeight = Mathf.Max(1, height);
+        occupancyCenter = center;
+        occupiedCells = BuildingManager.GetFootprintCells(center, footprintWidth, footprintHeight);
+        hasOccupancy = true;
+    }
+
+    private Vector2 SnapToFootprintCenter(Vector3 position)
+    {
+        float xOffset = (footprintWidth % 2 == 0) ? 0.5f : 0f;
+        float yOffset = (footprintHeight % 2 == 0) ? 0.5f : 0f;
+        return new Vector2(
+            Mathf.Round(position.x - xOffset) + xOffset,
+            Mathf.Round(position.y - yOffset) + yOffset);
+    }
+
+    /// <summary>Verschiebt die Belegung mit dem Schiff (nur wenn sich die Grid-Zelle aendert).</summary>
+    private void UpdateOccupancy()
+    {
+        if (!hasOccupancy) return;
+
+        Vector2 snapped = SnapToFootprintCenter(transform.position);
+        if ((snapped - occupancyCenter).sqrMagnitude < 0.0001f) return;
+
+        BuildingManager.FreeOccupancyCells(occupiedCells);
+        occupancyCenter = snapped;
+        occupiedCells = BuildingManager.GetFootprintCells(snapped, footprintWidth, footprintHeight);
+        BuildingManager.RegisterOccupancyCells(occupiedCells);
+    }
+
+    private void ReleaseOccupancy()
+    {
+        if (!hasOccupancy) return;
+        BuildingManager.FreeOccupancyCells(occupiedCells);
+        occupiedCells.Clear();
+        hasOccupancy = false;
+    }
+
     private void InitializeSlots()
     {
         slots.Clear();
@@ -191,6 +243,7 @@ public class Ship : MonoBehaviour
     private void Update()
     {
         HandleMovement();
+        UpdateOccupancy();
 
         if (isLocal)
         {
@@ -305,12 +358,24 @@ public class Ship : MonoBehaviour
     // ── Bewegung ─────────────────────────────────────────────────────────
     private const float WaypointReachedDistance = 0.35f;
     private float waypointBestDistance = float.MaxValue;
+    private int collisionRepaths = 0;
+    private const int MaxCollisionRepaths = 3;
 
     private void HandleMovement()
     {
         if (!isLocal) return; // nur der BESITZER simuliert die Fahrt
 
         if (!isMoving) return;
+
+        // Fallback: Schiff steht auf Land -> sofort anhalten statt erst nach
+        // ein paar Sekunden Fahrt durch die Insel.
+        if (IsOnLand())
+        {
+            StopMovement();
+            NotificationManager.Instance?.Notify("ship_stranded",
+                "Schiff gestrandet! Bitte auf Wasser setzen.", 5f);
+            return;
+        }
 
         Vector3 target = GetCurrentWaypoint();
         Vector3 direction = target - transform.position;
@@ -328,14 +393,6 @@ public class Ship : MonoBehaviour
         }
         waypointBestDistance = Mathf.Min(waypointBestDistance, distance);
 
-        if (Time.time - movementStartTime > 2f && IsOnLand())
-        {
-            StopMovement();
-            NotificationManager.Instance?.Notify("ship_stranded",
-                waterPath.Count > 0 ? "Schiff gestrandet!" : "Schiff gestrandet! Kein Wasserweg.", 5f);
-            return;
-        }
-
         currentAngle = RotateTowards(direction);
         transform.rotation = Quaternion.Euler(0f, 0f, currentAngle);
 
@@ -346,9 +403,58 @@ public class Ship : MonoBehaviour
         float alignment = Mathf.Clamp01(Mathf.Cos(Mathf.DeltaAngle(currentAngle, desiredAngle) * Mathf.Deg2Rad));
         float speedFactor = Mathf.Lerp(0.15f, 1f, alignment);
         float step = Mathf.Min(moveSpeed * speedFactor * Time.deltaTime, distance);
-        transform.position += direction / distance * step;
+        Vector3 nextPosition = transform.position + direction / distance * step;
+
+        // Landkollision: keinen Schritt auf eine Landzelle machen. Das greift
+        // auch, wenn der (geglaettete) Pfad durch Drift neben der Ideallinie
+        // liegt oder gar kein Wasserpfad gefunden wurde.
+        if (!IsPositionAllowed(nextPosition))
+        {
+            // Erst versuchen, ab der aktuellen Position neu zu planen und um
+            // die Insel herumzufahren. Klappt das nicht, anhalten statt
+            // durch Land zu fahren.
+            if (TryRepathFromCurrent())
+                return;
+
+            StopMovement();
+            NotificationManager.Instance?.Notify("ship_stranded", "Schiff gestrandet! Kein Wasserweg.", 5f);
+            return;
+        }
+
+        transform.position = nextPosition;
 
         RevealFogAlongPath();
+    }
+
+    /// <summary>
+    /// Darf das Schiff an diese Position? Nur Wasser - Land ist fuer Schiffe
+    /// grundsaetzlich nicht befahrbar.
+    /// </summary>
+    private bool IsPositionAllowed(Vector3 position)
+    {
+        Vector2Int cell = new Vector2Int(Mathf.RoundToInt(position.x), Mathf.RoundToInt(position.y));
+        return !IslandManager.IsLand(cell);
+    }
+
+    /// <summary>
+    /// Plant den Wasserweg ab der aktuellen Position neu, wenn die aktuelle
+    /// Ideallinie an Land stossen wuerde. So faehrt das Schiff um die Insel
+    /// herum, anstatt einfach dagegen zu fahren.
+    /// </summary>
+    private bool TryRepathFromCurrent()
+    {
+        if (collisionRepaths >= MaxCollisionRepaths) return false;
+        if (IsOnLand()) return false;
+
+        List<Vector2> path = BuildingManager.FindWaterPath(transform.position, targetPosition);
+        path = SmoothWaterPath(transform.position, path);
+        if (path.Count == 0) return false;
+
+        collisionRepaths++;
+        waterPath = path;
+        waterPathIndex = 0;
+        waypointBestDistance = float.MaxValue;
+        return true;
     }
 
     private Vector3 GetCurrentWaypoint()
@@ -364,6 +470,7 @@ public class Ship : MonoBehaviour
     private void AdvanceWaypoint()
     {
         waypointBestDistance = float.MaxValue;
+        collisionRepaths = 0;
 
         if (waterPathIndex < waterPath.Count)
         {
@@ -421,12 +528,93 @@ public class Ship : MonoBehaviour
 
         targetPosition = new Vector3(destination.x, destination.y, transform.position.z);
 
-        waterPath = BuildingManager.FindWaterPath(transform.position, destination);
-        waterPath = SmoothWaterPath(transform.position, waterPath);
+        // Gestrandet? Dann das Schiff zuerst ans naechste Ufer setzen. Es darf
+        // auf keinen Fall sichtbar ueber Land fahren - genau dadurch landete es
+        // frueher ein paar Bloecke tief auf der Insel und blieb haengen.
+        if (IsOnLand())
+        {
+            List<Vector2> escape = FindLandEscapePath(transform.position);
+            if (escape == null || escape.Count == 0)
+            {
+                StopMovement();
+                NotificationManager.Instance?.Notify("ship_stranded",
+                    "Schiff gestrandet! Kein Wasserweg erreichbar.", 5f);
+                return;
+            }
+
+            Vector2 shore = escape[escape.Count - 1];
+            transform.position = new Vector3(shore.x, shore.y, transform.position.z);
+            UpdateOccupancy();
+        }
+
+        Vector3 pathStart = transform.position;
+        waterPath = BuildingManager.FindWaterPath(pathStart, destination);
+        waterPath = SmoothWaterPath(pathStart, waterPath);
         waterPathIndex = 0;
         waypointBestDistance = float.MaxValue;
-        movementStartTime = Time.time;
+        collisionRepaths = 0;
+
+        if (waterPath.Count == 0)
+        {
+            // Kein Wasserweg: Auf keinen Fall geradeaus fahren (das waere der
+            // Weg quer ueber die Insel).
+            StopMovement();
+            NotificationManager.Instance?.Notify("ship_stranded",
+                "Kein Wasserweg zum Ziel!", 5f);
+            return;
+        }
+
         isMoving = true;
+    }
+
+    /// <summary>
+    /// Kuerzester Zellpfad von einer (gestrandeten) Landposition bis zur ersten
+    /// Wasserzelle. Der letzte Punkt ist immer Wasser. Null, wenn im Suchradius
+    /// kein Wasser erreichbar ist.
+    /// </summary>
+    private static List<Vector2> FindLandEscapePath(Vector2 from, int maxExpansions = 20000)
+    {
+        Vector2Int start = new Vector2Int(Mathf.RoundToInt(from.x), Mathf.RoundToInt(from.y));
+        if (!IslandManager.IsLand(start)) return new List<Vector2>();
+
+        var queue = new Queue<Vector2Int>();
+        var cameFrom = new Dictionary<Vector2Int, Vector2Int>();
+        queue.Enqueue(start);
+        cameFrom[start] = start;
+
+        Vector2Int[] dirs = { new Vector2Int(1, 0), new Vector2Int(-1, 0), new Vector2Int(0, 1), new Vector2Int(0, -1) };
+        int limit = BuildingManager.MapCellLimit;
+        int expansions = 0;
+
+        while (queue.Count > 0 && expansions++ < maxExpansions)
+        {
+            Vector2Int current = queue.Dequeue();
+            foreach (var d in dirs)
+            {
+                Vector2Int next = current + d;
+                if (cameFrom.ContainsKey(next)) continue;
+                if (next.x < -limit || next.x > limit || next.y < -limit || next.y > limit) continue;
+
+                cameFrom[next] = current;
+
+                if (!IslandManager.IsLand(next))
+                {
+                    var path = new List<Vector2>();
+                    Vector2Int step = next;
+                    while (step != start)
+                    {
+                        path.Add(new Vector2(step.x, step.y));
+                        step = cameFrom[step];
+                    }
+                    path.Reverse();
+                    return path;
+                }
+
+                queue.Enqueue(next);
+            }
+        }
+
+        return null;
     }
 
     /// <summary>
@@ -496,29 +684,15 @@ public class Ship : MonoBehaviour
 
     private Vector3 FindNearestWater(Vector3 landPos)
     {
-        Vector2Int center = new Vector2Int(Mathf.RoundToInt(landPos.x), Mathf.RoundToInt(landPos.y));
-        int searchRadius = 20;
-
-        for (int r = 1; r <= searchRadius; r++)
+        // Naechstes Ufer ueber den kuerzesten Landweg suchen. Die alte
+        // Ring-Suche brach nach 20 Zellen ab und lieferte bei grossen Inseln
+        // wieder eine Landzelle - daraus wurde ein leerer Wasserpfad und das
+        // Schiff fuhr geradeaus weiter.
+        List<Vector2> escape = FindLandEscapePath(landPos);
+        if (escape != null && escape.Count > 0)
         {
-            for (int dx = -r; dx <= r; dx++)
-            {
-                for (int dy = -r; dy <= r; dy++)
-                {
-                    if (Mathf.Abs(dx) != r && Mathf.Abs(dy) != r) continue;
-                    Vector2Int test = new Vector2Int(center.x + dx, center.y + dy);
-                    if (IslandManager.IsLand(test))
-                    {
-                        Vector2Int[] dirs = { Vector2Int.up, Vector2Int.down, Vector2Int.left, Vector2Int.right };
-                        foreach (var d in dirs)
-                        {
-                            Vector2Int water = test + d;
-                            if (!IslandManager.IsLand(water))
-                                return new Vector3(water.x, water.y, landPos.z);
-                        }
-                    }
-                }
-            }
+            Vector2 shore = escape[escape.Count - 1];
+            return new Vector3(shore.x, shore.y, landPos.z);
         }
 
         return landPos;
@@ -1151,6 +1325,8 @@ public class Ship : MonoBehaviour
 
     private void OnDestroy()
     {
+        ReleaseOccupancy();
+
         if (shipNetId != 0)
         {
             NetCombat.UnregisterShip(this);
