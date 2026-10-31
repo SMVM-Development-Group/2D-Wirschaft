@@ -11,32 +11,26 @@ public class FogProjector : MonoBehaviour
     [SerializeField] private float mapSize = 2000f;
 
     private RenderTexture maskTexture;
-    private RenderTexture exploredTexture;
     private Camera maskCamera;
-    private Camera exploredCamera;
     private GameObject fogQuad;
+
+    // Aufdeck-Maske: wird direkt (CPU) in eine Texture2D geschrieben.
+    // Der frühere Kamera->RenderTexture-Weg (Layer-30-Mesh + zweite Kamera) hat
+    // mit URP/RenderGraph nicht zuverlässig in die Textur gerendert — die Folge war,
+    // dass aufgedeckte Gebiete im Spiel weiter wie unexplored aussahen.
+    private static Texture2D exploredTexture;
+    private static bool exploredDirty;
+    private static int exploredResolution = 1024;
+    private static float exploredWorldSize = 2000f;
 
     private static HashSet<Vector2> exploredCells = new HashSet<Vector2>();
     private static int explorationVersion = 0;
     public static int ExplorationVersion => explorationVersion;
 
-    // ── Chunked explored-mesh (kein Full-Rebuild mehr — der größte Lag-Verursacher) ──
-    private const int ChunkSize = 32;
-    private static readonly HashSet<Vector2Int> dirtyChunks = new HashSet<Vector2Int>();
-    private static readonly Dictionary<Vector2Int, List<Vector2>> chunkCells = new Dictionary<Vector2Int, List<Vector2>>();
-    private static readonly Dictionary<Vector2Int, MeshFilter> chunkFilters = new Dictionary<Vector2Int, MeshFilter>();
-
-    private GameObject exploredMeshObj;
-    private const float ExploredRebuildInterval = 0.25f;
-    private float exploredRebuildTimer = 0f;
-    private const float ExploredRefreshInterval = 10f; // RT-Inhaltsverlust (z.B. Alt-Tab) periodisch ausgleichen
-    private float exploredRefreshTimer = 0f;
     private const float MaskRenderInterval = 0.06f; // ~16 FPS reicht völlig für die Maske
     private float maskRenderTimer = 0f;
-
-    // ── TEMPORÄRES DEBUG (F9 umschalten): zeigt Fog-Zustand an der Mausposition ──
-    private bool debugOverlay = false;
-    private GUIStyle debugStyle;
+    private const float ExploredApplyInterval = 0.15f;
+    private float exploredApplyTimer = 0f;
 
     public static bool IsExplored(Vector2 pos)
     {
@@ -75,29 +69,20 @@ public class FogProjector : MonoBehaviour
 
     public static void RegisterExploration(Vector2 center, float radius)
     {
+        if (radius <= 0f) return;
+
         int r = Mathf.CeilToInt(radius);
         for (int x = -r; x <= r; x++)
         {
             for (int y = -r; y <= r; y++)
             {
-                if (x*x + y*y <= radius*radius)
+                if (x * x + y * y <= radius * radius)
                 {
                     Vector2 cell = new Vector2(Mathf.Round(center.x + x), Mathf.Round(center.y + y));
                     if (exploredCells.Add(cell))
                     {
                         explorationVersion++;
-
-                        // Zelle direkt in ihren Chunk einsortieren (Liste wird je Chunk einmal geführt)
-                        Vector2Int chunk = new Vector2Int(
-                            Mathf.FloorToInt(cell.x / ChunkSize),
-                            Mathf.FloorToInt(cell.y / ChunkSize));
-                        if (!chunkCells.TryGetValue(chunk, out List<Vector2> list))
-                        {
-                            list = new List<Vector2>();
-                            chunkCells[chunk] = list;
-                        }
-                        list.Add(cell);
-                        dirtyChunks.Add(chunk);
+                        PaintExploredCell(cell);
                     }
                 }
             }
@@ -106,6 +91,61 @@ public class FogProjector : MonoBehaviour
 
     public static void AddRevealer(FogRevealer r) => revealers.Add(r);
     public static void RemoveRevealer(FogRevealer r) => revealers.Remove(r);
+
+    // ── Aufdeck-Textur (CPU) ────────────────────────────────────────────────
+
+    /// <summary>Malt eine aufgedeckte Zelle weiss in die Aufdeck-Textur.</summary>
+    private static void PaintExploredCell(Vector2 cell)
+    {
+        if (exploredTexture == null) return;
+
+        float res = exploredResolution;
+        float size = exploredWorldSize;
+
+        // Weltkoordinate -> Pixel; die Zelle ist 1x1 Weltunits gross.
+        int x0 = Mathf.FloorToInt(((cell.x - 0.5f) / size + 0.5f) * res);
+        int x1 = Mathf.CeilToInt(((cell.x + 0.5f) / size + 0.5f) * res);
+        int y0 = Mathf.FloorToInt(((cell.y - 0.5f) / size + 0.5f) * res);
+        int y1 = Mathf.CeilToInt(((cell.y + 0.5f) / size + 0.5f) * res);
+
+        // Mindestens 1 Pixel pro Zelle (sonst gehen kleine Zellen bei grober Textur verloren)
+        if (x1 <= x0) x1 = x0 + 1;
+        if (y1 <= y0) y1 = y0 + 1;
+
+        x0 = Mathf.Clamp(x0, 0, exploredResolution - 1);
+        x1 = Mathf.Clamp(x1, 0, exploredResolution);
+        y0 = Mathf.Clamp(y0, 0, exploredResolution - 1);
+        y1 = Mathf.Clamp(y1, 0, exploredResolution);
+
+        for (int px = x0; px < x1; px++)
+        {
+            for (int py = y0; py < y1; py++)
+            {
+                exploredTexture.SetPixel(px, py, Color.white);
+            }
+        }
+        exploredDirty = true;
+    }
+
+    /// <summary>Baut die komplette Aufdeck-Textur aus allen bekannten Zellen neu auf (z.B. nach Szenenwechsel).</summary>
+    private static void RepaintAllExplored()
+    {
+        if (exploredTexture == null) return;
+
+        int count = exploredResolution * exploredResolution;
+        Color32[] black = new Color32[count]; // alle 0 (schwarz)
+        exploredTexture.SetPixels32(black);
+
+        foreach (Vector2 cell in exploredCells)
+        {
+            PaintExploredCell(cell);
+        }
+
+        exploredTexture.Apply(false);
+        exploredDirty = false;
+    }
+
+    // ── Lifecycle ───────────────────────────────────────────────────────────
 
     private void Start()
     {
@@ -117,12 +157,9 @@ public class FogProjector : MonoBehaviour
 
         SetupFog();
 
-        // Exploration ist static und überlebt Szenenwechsel — die Chunk-Meshes hier NICHT.
-        // Deshalb: alle bereits bekannten Chunks als dirty markieren, damit sie neu gebacken werden.
-        foreach (Vector2Int chunk in chunkCells.Keys)
-        {
-            dirtyChunks.Add(chunk);
-        }
+        // Exploration ist static und überlebt Szenenwechsel — die Textur hier NICHT.
+        // Deshalb: alle bereits bekannten Zellen einmal neu einbrennen.
+        RepaintAllExplored();
     }
 
     private void SetupFog()
@@ -153,14 +190,12 @@ public class FogProjector : MonoBehaviour
         maskTexture = new RenderTexture(maskResolution, maskResolution, 24);
         maskTexture.filterMode = FilterMode.Bilinear;
 
-        // Depth-Bits nötig: Unity 6 RenderGraph verlangt für kamerabasiertes Rendering
-        // in eine Output-RT einen Depth-Buffer (statt None gibt es sonst nur eine Warning).
-        exploredTexture = new RenderTexture(maskResolution, maskResolution, 24, RenderTextureFormat.ARGB32);
+        // Aufdeck-Textur: normale Texture2D, wird per SetPixel befüllt
+        exploredResolution = maskResolution;
+        exploredWorldSize = mapSize;
+        exploredTexture = new Texture2D(maskResolution, maskResolution, TextureFormat.RGBA32, false);
         exploredTexture.filterMode = FilterMode.Bilinear;
-        exploredTexture.Create();
-        RenderTexture.active = exploredTexture;
-        GL.Clear(true, true, Color.clear);
-        RenderTexture.active = null;
+        exploredTexture.wrapMode = TextureWrapMode.Clamp;
 
         CreateMaskCamera();
 
@@ -174,7 +209,6 @@ public class FogProjector : MonoBehaviour
             Debug.LogWarning("[FogProjector] Keine Hauptkamera gefunden. Layer 31 wird nicht ausgeblendet.");
         }
 
-        CreateExploredCamera();
         CreateFogOverlay();
     }
 
@@ -192,22 +226,6 @@ public class FogProjector : MonoBehaviour
         maskCamera.depth = 1;
         // Wird manuell aus Update() in Intervallen gerendert, nicht jedes Frame automatisch
         maskCamera.enabled = false;
-    }
-
-    private void CreateExploredCamera()
-    {
-        GameObject camObj = new GameObject("ExploredMaskCamera");
-        camObj.transform.SetParent(transform);
-        camObj.transform.position = new Vector3(0, 0, -49f);
-        exploredCamera = camObj.AddComponent<Camera>();
-        exploredCamera.orthographic = true;
-        exploredCamera.orthographicSize = mapSize / 2f;
-        exploredCamera.targetTexture = exploredTexture;
-        exploredCamera.clearFlags = CameraClearFlags.Nothing;
-        exploredCamera.backgroundColor = Color.black;
-        exploredCamera.cullingMask = 1 << 30;
-        exploredCamera.depth = 0;
-        exploredCamera.enabled = false;
     }
 
     private void CreateFogOverlay()
@@ -242,143 +260,27 @@ public class FogProjector : MonoBehaviour
 
     private void Update()
     {
-        // Nur rendern, wenn es überhaupt etwas zu rendern gibt
-        if (exploredTexture == null || exploredCamera == null || maskCamera == null) return;
-
-        // Chunk-Rebuilds gebündelt (max. alle 0.25s statt bei jeder neuen Zelle sofort)
-        exploredRebuildTimer -= Time.deltaTime;
-        if (dirtyChunks.Count > 0 && exploredRebuildTimer <= 0f)
-        {
-            exploredRebuildTimer = ExploredRebuildInterval;
-            RebuildDirtyChunks();
-            dirtyChunks.Clear();
-
-            // Explored-Textur nach geändertem Mesh neu backen
-            exploredCamera.Render();
-        }
-
-        // Periodisches Nachrenderen: RenderTexture-Inhalte können nach Fokuswechsel
-        // im VRAM verloren gehen — dann würde aufgedecktes Terrain als Nebel erscheinen.
-        exploredRefreshTimer -= Time.deltaTime;
-        if (exploredRefreshTimer <= 0f)
-        {
-            exploredRefreshTimer = ExploredRefreshInterval;
-            exploredCamera.Render();
-        }
-
         // Mask-Kamera (aktuelles Sichtfeld) drosselt das pro-Frame-Rendern
-        maskRenderTimer -= Time.deltaTime;
-        if (maskRenderTimer <= 0f)
+        if (maskCamera != null)
         {
-            maskRenderTimer = MaskRenderInterval;
-            maskCamera.Render();
-        }
-    }
-
-    private void OnGUI()
-    {
-        // TEMPORÄRES DEBUG: F9 schaltet ein/aus. Zeigt Live-Zustand unter der Maus.
-        var keyboard = UnityEngine.InputSystem.Keyboard.current;
-        if (keyboard != null && keyboard.f9Key.wasPressedThisFrame)
-        {
-            debugOverlay = !debugOverlay;
-            Debug.Log($"[FogDebug] Overlay {(debugOverlay ? "AN" : "AUS")} | exploredCells={exploredCells.Count} | dirtyChunks={dirtyChunks.Count}");
-        }
-
-        if (!debugOverlay) return;
-
-        if (debugStyle == null)
-        {
-            debugStyle = new GUIStyle(GUI.skin.label);
-            debugStyle.fontSize = 16;
-        }
-
-        Vector3 mousePos = UnityEngine.InputSystem.Mouse.current != null
-            ? (Vector3)UnityEngine.InputSystem.Mouse.current.position.value
-            : Vector3.zero;
-        Vector3 mp = Camera.main ? Camera.main.ScreenToWorldPoint(mousePos) : Vector3.zero;
-        Vector2 wp = new Vector2(mp.x, mp.y);
-        bool exp = IsExplored(wp);
-        bool vis = IsVisible(wp);
-
-        GUI.Label(new Rect(10, 10, 560, 32), $"[FOG] exp={exploredCells.Count} dirty={dirtyChunks.Count}  |  F9 = aus", debugStyle);
-        GUI.Label(new Rect(10, 44, 560, 32),
-            $"Maus({wp.x:F1},{wp.y:F1})   explored: {(exp ? "JA" : "NEIN")}   sichtbar jetzt: {(vis ? "JA" : "NEIN")}",
-            debugStyle);
-    }
-
-    private void RebuildDirtyChunks()
-    {
-        if (exploredMeshObj == null)
-        {
-            exploredMeshObj = new GameObject("ExploredMesh");
-            exploredMeshObj.layer = 30;
-            exploredMeshObj.transform.SetParent(transform);
-            exploredMeshObj.transform.position = Vector3.zero;
-            exploredMeshObj.AddComponent<MeshFilter>();
-            MeshRenderer mr = exploredMeshObj.AddComponent<MeshRenderer>();
-            mr.material = new Material(Shader.Find("Unlit/Color"));
-            mr.material.color = Color.white;
-        }
-
-        foreach (Vector2Int chunk in dirtyChunks)
-        {
-            List<Vector2> cells = GetOrCreateChunkCells(chunk);
-
-            if (!chunkFilters.TryGetValue(chunk, out MeshFilter filter) || filter == null)
+            maskRenderTimer -= Time.deltaTime;
+            if (maskRenderTimer <= 0f)
             {
-                GameObject chunkObj = new GameObject($"ExploredChunk_{chunk.x}_{chunk.y}");
-                chunkObj.layer = 30;
-                chunkObj.transform.SetParent(exploredMeshObj.transform, false);
-                filter = chunkObj.AddComponent<MeshFilter>();
-                chunkFilters[chunk] = filter;
+                maskRenderTimer = MaskRenderInterval;
+                maskCamera.Render();
             }
-
-            // Mesh wiederverwenden statt jedes Mal neu zu erzeugen (vermeidet GC/Finalize-Druck)
-            Mesh mesh = filter.sharedMesh;
-            if (mesh == null)
-            {
-                mesh = new Mesh();
-                filter.sharedMesh = mesh;
-            }
-            mesh.Clear();
-
-            int cellCount = cells.Count;
-            Vector3[] verts = new Vector3[cellCount * 4];
-            int[] tris = new int[cellCount * 6];
-
-            for (int i = 0; i < cellCount; i++)
-            {
-                Vector2 cell = cells[i];
-                int vi = i * 4;
-                verts[vi]     = new Vector3(cell.x - 0.5f, cell.y - 0.5f, 0f);
-                verts[vi + 1] = new Vector3(cell.x + 0.5f, cell.y - 0.5f, 0f);
-                verts[vi + 2] = new Vector3(cell.x + 0.5f, cell.y + 0.5f, 0f);
-                verts[vi + 3] = new Vector3(cell.x - 0.5f, cell.y + 0.5f, 0f);
-
-                int ti = i * 6;
-                tris[ti]     = vi;
-                tris[ti + 1] = vi + 1;
-                tris[ti + 2] = vi + 2;
-                tris[ti + 3] = vi;
-                tris[ti + 4] = vi + 2;
-                tris[ti + 5] = vi + 3;
-            }
-
-            mesh.vertices = verts;
-            mesh.triangles = tris;
-            mesh.RecalculateBounds();
         }
-    }
 
-    private List<Vector2> GetOrCreateChunkCells(Vector2Int chunk)
-    {
-        if (!chunkCells.TryGetValue(chunk, out List<Vector2> cells))
+        // Aufdeck-Textur gebündelt zur GPU hochladen (nur wenn sich etwas geändert hat)
+        if (exploredDirty && exploredTexture != null)
         {
-            // Sollte normalerweise nie passieren (RegisterExploration legt alles an) — Fallback leere Liste
-            cells = new List<Vector2>();
-            chunkCells[chunk] = cells;
+            exploredApplyTimer -= Time.deltaTime;
+            if (exploredApplyTimer <= 0f)
+            {
+                exploredApplyTimer = ExploredApplyInterval;
+                exploredTexture.Apply(false);
+                exploredDirty = false;
+            }
         }
-        return cells;
     }
 }

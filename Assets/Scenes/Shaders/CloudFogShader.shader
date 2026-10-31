@@ -69,10 +69,10 @@ Shader "Custom/CloudFogShader"
                 // Explored-but-invisible shroud: einmal aufgedeckte Gebiete bleiben
                 // dauerhaft aufgedeckt — KEINE animierten Wolken mehr darueber (die
                 // rollende Wolkendecke sah aus wie frisch zurueckkommender Nebel).
-                // Stattdessen ein deutlich grauer, statischer Schleier: man erkennt
-                // den Bereich klar, aber alles darin wirkt "ausgegraut/erinnert".
-                float shroudAlpha = 0.5f;
-                fixed4 shroudCol = fixed4(0.5, 0.53, 0.58, shroudAlpha);
+                // Nur ein leichter, statischer Dunstschleier, damit das Terrain klar
+                // erkennbar ist und sich sichtbar von unexplored unterscheidet.
+                float shroudAlpha = 0.22f;
+                fixed4 shroudCol = fixed4(0.85, 0.9, 0.95, shroudAlpha);
                 
                 // Smooth interpolation between unexplored clouds and explored shroud
                 fixed4 baseCloud = lerp(unexploredCol, shroudCol, saturate(explored));
